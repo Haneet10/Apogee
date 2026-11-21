@@ -1,0 +1,124 @@
+# Kestrel: a 4-inch fiberglass high-power rocket on a 75 mm M motor.
+#
+# Lengths and masses take units (mm, cm, m, in, ft / g, kg, oz, lb); bare
+# numbers are SI. Parts are listed nose to tail. Fins and internal parts go
+# in a body tube's `contents`, positioned from that tube's front end
+# (`position`) or its aft end (`aft_offset`). Add `mass:` to any part you
+# have weighed to override the value computed from its material.
+
+name: Kestrel
+description: 4-inch fiberglass high-power rocket, dual deploy, 75 mm M motor
+
+motor:
+  file: motors/Cesaroni_M1670.eng
+  overhang: 15mm              # motor retainer at the tail
+
+components:
+  - nose_cone:
+      shape: von_karman
+      length: 510mm           # 5:1
+      diameter: 102mm
+      thickness: 2.5mm
+      material: fiberglass
+      mass: 880g              # weighed, includes the shoulder and tip
+
+  - body_tube:
+      name: Payload bay
+      length: 760mm
+      thickness: 1.6mm        # diameter carries on from the nose cone
+      material: fiberglass
+      contents:
+        - parachute:
+            name: Main parachute
+            diameter: 1.8m
+            cd: 1.6
+            mass: 450g
+            packed_length: 180mm
+            position: 40mm
+            deploy: 300m      # opens on the way down at 300 m above the pad
+        - mass:
+            name: Main shock cord
+            mass: 220g
+            length: 120mm
+            diameter: 80mm
+            position: 240mm
+        - bulkhead:
+            thickness: 6mm
+            material: plywood
+            aft_offset: 0mm
+
+  - body_tube:
+      name: Avionics bay
+      length: 150mm
+      thickness: 1.6mm
+      material: fiberglass
+      contents:
+        - mass:
+            name: Flight computer and batteries
+            mass: 650g
+            length: 130mm
+            diameter: 60mm
+            position: 10mm
+
+  - body_tube:
+      name: Booster
+      length: 1100mm
+      thickness: 1.6mm
+      material: fiberglass
+      contents:
+        - bulkhead:
+            thickness: 6mm
+            material: plywood
+        - parachute:
+            name: Drogue parachute
+            diameter: 600mm
+            cd: 1.5
+            mass: 120g
+            packed_length: 90mm
+            position: 30mm
+            deploy: apogee
+        - mass:
+            name: Drogue shock cord
+            mass: 180g
+            length: 100mm
+            diameter: 70mm
+            position: 130mm
+        - inner_tube:
+            name: Motor mount
+            length: 800mm
+            diameter: 79.5mm
+            thickness: 1.6mm
+            material: fiberglass
+            motor_mount: true   # flush with the tail unless positioned
+        - ring:
+            name: Forward centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            position: 300mm
+        - ring:
+            name: Mid centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            aft_offset: 320mm
+        - ring:
+            name: Aft centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            aft_offset: 5mm
+        - mass:
+            name: Motor retainer and rail buttons
+            mass: 260g
+            length: 40mm
+            diameter: 90mm
+            aft_offset: 0mm
+        - fins:
+            count: 3
+            root_chord: 300mm
+            tip_chord: 100mm
+            span: 120mm
+            sweep: 180mm
+            thickness: 3.2mm
+            material: fiberglass

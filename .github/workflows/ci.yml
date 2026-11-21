@@ -33,4 +33,7 @@ jobs:
       - name: Test
         run: pytest
       - name: CLI smoke test
-        run: apogee atmosphere 0 11km 30000ft
+        run: |
+          apogee atmosphere 0 11km 30000ft
+          apogee rocket examples/rocket.yaml
+          apogee motor examples/motors/Cesaroni_M1670.eng

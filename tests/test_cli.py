@@ -74,3 +74,67 @@ def test_version(capsys):
     with pytest.raises(SystemExit):
         main(["--version"])
     assert __version__ in capsys.readouterr().out
+
+
+ROCKET = "examples/rocket.yaml"
+MOTOR = "examples/motors/Cesaroni_M1670.eng"
+
+
+@pytest.fixture
+def in_repo(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.chdir(Path(__file__).parents[1])
+
+
+def test_rocket_command_prints_breakdown_and_states(in_repo):
+    code, text = run("rocket", ROCKET)
+    assert code == 0
+    assert text.startswith("Kestrel\n")
+    assert "Nose cone *" in text and "* measured mass" in text
+    for label in ("Dry, no motor", "Liftoff", "Burnout"):
+        assert label in text
+    assert "class M" in text
+    assert "moves" in text and "forward" in text
+    assert "Main parachute: 1.80 m, Cd 1.60, opens at 300 m on descent" in text
+
+
+def test_rocket_command_reports_file_errors(tmp_path, capsys):
+    bad = tmp_path / "r.yaml"
+    bad.write_text("name: x\ncomponents:\n  - body_tube: {length: 1m}\n")
+    code, _ = run("rocket", str(bad))
+    assert code == 2
+    assert "start the components list with a nose_cone" in capsys.readouterr().err
+
+
+def test_motor_command(in_repo):
+    code, text = run("motor", MOTOR)
+    assert code == 0
+    assert "CTI M1670-BS" in text
+    assert "6,026.4 N·s  (class M, matches the designation)" in text
+    assert "█" in text
+
+
+def test_motor_command_missing_file(capsys):
+    code, _ = run("motor", "nope.eng")
+    assert code == 2
+    assert "motor file not found" in capsys.readouterr().err
+
+
+def test_sparkline_peaks_at_full_block(in_repo):
+    from apogee.cli import thrust_sparkline
+    from apogee.motor import load_motor
+
+    line = thrust_sparkline(load_motor(MOTOR), width=40)
+    assert len(line) == 40
+    assert "█" in line
+
+
+def test_rocket_without_file_shows_bundled_example(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # works from anywhere, not just the repo
+    code, text = run("rocket")
+    assert code == 0
+    assert text.startswith("Kestrel")
+    assert "built-in example" in text
+    code, text = run("motor")
+    assert code == 0 and "M1670-BS" in text

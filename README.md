@@ -2,12 +2,60 @@
 
 **A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against OpenRocket, the hobby-rocketry standard.
 
-> **Status:** in active development (week of Nov 19, 2026). The atmosphere model is done; the rocket, aerodynamics and flight solver land over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** in active development (week of Nov 19, 2026). The atmosphere, motors and rocket mass model are done; aerodynamics and the flight solver land over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
 ```bash
 pip install git+https://github.com/Haneet10/Apogee
+apogee rocket
+```
+
+With no file, `apogee rocket` loads the built-in example, Kestrel: a 4-inch fiberglass rocket on a 75 mm M motor. It lists every part, then the numbers that matter for flight:
+
+```
+                Mass       CG  Ixx roll  Iyy pitch
+                [kg]     [mm]   [kg·m²]    [kg·m²]
+─────────────  ─────  ───────  ────────  ─────────
+Dry, no motor  5.731  1,392.0   0.01348      3.154
+Liftoff        10.96  1,756.8   0.01865      5.004
+Burnout        7.861  1,599.2   0.01647      4.164
+
+Motor   CTI M1670-BS  ·  class M  ·  6,026 N·s  ·  3.90 s burn
+Thrust-to-weight at liftoff 14.4 average, 20.5 peak
+The CG moves 158 mm forward as the propellant burns.
+```
+
+### Your own rocket
+
+Describe it in a YAML file, nose to tail. Lengths and masses take units (`mm`, `in`, `g`, `oz`...), and any part you have weighed can carry its real `mass`:
+
+```yaml
+name: My first rocket
+motor:
+  file: Estes_C6.eng            # any RASP .eng file, e.g. from thrustcurve.org
+components:
+  - nose_cone: {shape: ogive, length: 100mm, diameter: 24.8mm, thickness: 1.5mm, material: polystyrene}
+  - body_tube:
+      length: 300mm
+      thickness: 0.5mm
+      material: cardboard
+      contents:
+        - inner_tube: {length: 70mm, diameter: 19mm, thickness: 0.5mm, material: cardboard}
+        - fins: {count: 3, root_chord: 60mm, tip_chord: 30mm, span: 45mm, sweep: 30mm, thickness: 2.4mm, material: balsa}
+        - parachute: {diameter: 300mm, mass: 10g, position: 40mm}
+```
+
+```bash
+apogee rocket my_rocket.yaml     # parts, mass, CG and inertia
+apogee motor Estes_C6.eng        # impulse, class check, thrust curve
+```
+
+Every setting is listed in [`docs/rocket.md`](docs/rocket.md). Typos get a pointed answer: `unknown setting 'lenght'; did you mean 'length'?`
+
+### The atmosphere
+
+```bash
 apogee atmosphere 0 1.5km 10000ft
 ```
 
@@ -29,10 +77,15 @@ air = atmosphere(1500.0)   # metres above sea level; NumPy arrays work too
 air.density                # 1.0581 kg/m³
 ```
 
-## What it will do
+## What it does
+
+- Load a rocket from a readable YAML file and a motor from any standard `.eng` thrust curve
+- Work out mass, centre of gravity and moments of inertia, and how they change as the motor burns
+
+Coming this week:
 
 - Simulate a full flight in six degrees of freedom (position *and* orientation), from the launch rail to touchdown
-- Model the atmosphere, motor thrust curves (standard `.eng` files), drag, wind and weathercocking, and parachute recovery
+- Model drag, wind and weathercocking, and parachute recovery
 - Report apogee, max velocity, max acceleration, stability margin and landing distance
 - Play the flight back in the browser
 
@@ -40,6 +93,7 @@ air.density                # 1.0581 kg/m³
 
 - Rigid-body 6-DOF equations with quaternion attitude, integrated with fixed-step RK4 and event detection (burnout, apogee, deployment, landing)
 - 1976 US Standard Atmosphere, -5 to 86 km, matching every published table value tested to within 0.007 % (the table's own rounding) and checked for hydrostatic balance. Method and validation: [`docs/atmosphere.md`](docs/atmosphere.md)
+- Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
 - Barrowman centre-of-pressure and normal-force slopes; component drag build-up (skin friction, pressure, base, fin) as a function of Mach and Reynolds number
 - Validation suite: drag-free ballistic flight vs closed form, energy and quaternion-norm checks, and a reference flight compared to OpenRocket
 
@@ -52,4 +106,4 @@ pytest            # unit tests and doctests
 ruff check . && mypy
 ```
 
-Python 3.11+ and NumPy for the solver, pytest for tests, plain HTML/JS for the viewer.
+Python 3.11+, NumPy and PyYAML for the solver, pytest for tests, plain HTML/JS for the viewer.

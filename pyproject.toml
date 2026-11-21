@@ -11,8 +11,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Haneet Singh" }]
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.26"]
-keywords = ["rocketry", "flight-simulation", "6dof", "aerospace", "atmosphere"]
+dependencies = ["numpy>=1.26", "pyyaml>=6"]
+keywords = ["rocketry", "flight-simulation", "6dof", "aerospace", "atmosphere", "thrust-curve"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "types-PyYAML"]
 
 [project.scripts]
 apogee = "apogee.cli:main"
@@ -33,6 +33,9 @@ Repository = "https://github.com/Haneet10/Apogee"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/apogee"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples" = "apogee/examples"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src"]

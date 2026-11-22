@@ -138,3 +138,29 @@ def test_rocket_without_file_shows_bundled_example(tmp_path, monkeypatch):
     assert "built-in example" in text
     code, text = run("motor")
     assert code == 0 and "M1670-BS" in text
+
+
+def test_aero_shows_margin_verdict_and_drag_table():
+    code, text = run("aero")
+    assert code == 0
+    assert "Whole rocket" in text
+    assert "Off the rail: stable." in text
+    liftoff = next(line for line in text.splitlines() if line.startswith("Liftoff"))
+    assert 1.5 < float(liftoff.split()[-1]) < 3.0
+    assert "Cd coast" in text
+    assert "lower bound" in text  # rows above Mach 0.8 for a von Kármán nose
+
+
+def test_aero_custom_mach_list_and_altitude():
+    code, text = run("aero", "--mach", "0.3", "0.6", "--altitude", "3km")
+    assert code == 0
+    rows = [line for line in text.splitlines() if line[:4] in ("0.30", "0.60")]
+    assert len(rows) == 2
+    assert "at 3,000 m" in text
+    assert "lower bound" not in text
+
+
+def test_aero_rejects_bad_mach(capsys):
+    with pytest.raises(SystemExit):
+        main(["aero", "--mach", "fast"])
+    assert "between 0 and 5" in capsys.readouterr().err

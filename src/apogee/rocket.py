@@ -55,7 +55,14 @@ from apogee.components import (
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.units import UnitError, parse_density, parse_length, parse_mass
 
-__all__ = ["MATERIALS", "PlacedComponent", "Rocket", "RocketFileError", "load_rocket"]
+__all__ = [
+    "FINISHES",
+    "MATERIALS",
+    "PlacedComponent",
+    "Rocket",
+    "RocketFileError",
+    "load_rocket",
+]
 
 #: Typical densities of common rocketry materials [kg/m³]. Use ``density:``
 #: in the YAML for anything else, or ``mass:`` for parts you have weighed.
@@ -83,6 +90,20 @@ _MATERIAL_ALIASES = {
     "birch plywood": "plywood",
     "aluminium": "aluminum",
 }
+
+
+#: Surface roughness height of common finishes [m], as used by OpenRocket
+#: (Niskanen 2009). Set with ``finish:`` at the top of the YAML,
+#: or give a length such as ``finish: 35um``.
+FINISHES: dict[str, float] = {
+    "polished": 2e-6,
+    "smooth paint": 20e-6,
+    "regular paint": 60e-6,
+    "unfinished": 150e-6,
+    "rough": 500e-6,
+}
+
+_DEFAULT_FINISH = "regular paint"
 
 
 class RocketFileError(ValueError):
@@ -124,6 +145,8 @@ class Rocket:
         motor: The motor, or ``None`` for a bare airframe.
         motor_position: Nose tip to the motor's front end [m].
         warnings: Non-fatal issues found while loading.
+        finish: Name of the surface finish, for display.
+        roughness: Surface roughness height [m], for skin-friction drag.
     """
 
     name: str
@@ -132,6 +155,8 @@ class Rocket:
     motor: Motor | None = None
     motor_position: float = 0.0
     warnings: tuple[str, ...] = ()
+    finish: str = _DEFAULT_FINISH
+    roughness: float = FINISHES[_DEFAULT_FINISH]
 
     @property
     def length(self) -> float:
@@ -424,7 +449,7 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
     Raises:
         RocketFileError: Describing the first problem found and how to fix it.
     """
-    top = _Spec(data, "rocket", {"name", "description", "motor", "components"})
+    top = _Spec(data, "rocket", {"name", "description", "finish", "motor", "components"})
     components = top.data.get("components")
     if not isinstance(components, list) or not components:
         raise RocketFileError("rocket: add a 'components' list, starting with a nose_cone")
@@ -464,6 +489,7 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
             )
 
     motor, motor_pos = _motor(top, parts, base_dir, warnings)
+    finish, roughness = _finish(top)
     return Rocket(
         name=top.text("name", "Unnamed rocket"),
         description=top.text("description", ""),
@@ -471,6 +497,31 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
         motor=motor,
         motor_position=motor_pos,
         warnings=tuple(warnings),
+        finish=finish,
+        roughness=roughness,
+    )
+
+
+def _finish(top: _Spec) -> tuple[str, float]:
+    """Surface finish: a named finish or a roughness height such as ``35um``."""
+    raw = top.data.get("finish")
+    if raw is None:
+        return _DEFAULT_FINISH, FINISHES[_DEFAULT_FINISH]
+    name = str(raw).strip().lower().replace("_", " ").replace("-", " ")
+    if name in FINISHES:
+        return name, FINISHES[name]
+    text = str(raw).strip().lower()
+    for micro in ("µm", "um"):
+        if text.endswith(micro):
+            try:
+                value = float(text[: -len(micro)]) * 1e-6
+            except ValueError:
+                break
+            if value >= 0.0:
+                return f"{value * 1e6:g} µm roughness", value
+    options = ", ".join(n.replace(" ", "_") for n in FINISHES)
+    raise RocketFileError(
+        f"finish: unknown finish {raw!r}; use one of {options}, or a roughness height like 35um"
     )
 
 

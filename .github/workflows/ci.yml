@@ -37,3 +37,4 @@ jobs:
           apogee atmosphere 0 11km 30000ft
           apogee rocket examples/rocket.yaml
           apogee motor examples/motors/Cesaroni_M1670.eng
+          apogee aero examples/rocket.yaml --mach 0.3 0.9

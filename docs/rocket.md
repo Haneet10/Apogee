@@ -54,6 +54,11 @@ Everything else goes in a body tube's `contents`.
   inner tube marked `motor_mount: true` (or the only inner tube), and Apogee
   stops with a clear message if it does not fit.
 
+* **Finish.** An optional top-level `finish:` sets the surface roughness used
+  for skin-friction drag: `polished`, `smooth_paint`, `regular_paint` (the
+  default), `unfinished`, `rough`, or a height such as `35um`. See
+  [`aerodynamics.md`](aerodynamics.md).
+
 Mistakes are reported with the exact setting and a suggestion, for example
 `components[1].body_tube: unknown setting 'lenght'; did you mean 'length'?`.
 

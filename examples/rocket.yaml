@@ -8,6 +8,7 @@
 
 name: Kestrel
 description: 4-inch fiberglass high-power rocket, dual deploy, 75 mm M motor
+finish: smooth_paint          # polished, smooth_paint, regular_paint, unfinished, rough
 
 motor:
   file: motors/Cesaroni_M1670.eng

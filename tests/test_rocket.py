@@ -224,3 +224,25 @@ def test_british_spellings_are_accepted():
     doc["components"][1]["body_tube"]["material"] = "aluminium"
     r = rocket_from_dict(doc)
     assert r.parts[1].component.density == 2700.0
+
+
+@pytest.mark.parametrize(
+    ("finish", "name", "roughness"),
+    [
+        (None, "regular paint", 60e-6),
+        ("smooth_paint", "smooth paint", 20e-6),
+        ("Polished", "polished", 2e-6),
+        ("35um", "35 µm roughness", 35e-6),
+        ("12.5 µm", "12.5 µm roughness", 12.5e-6),
+    ],
+)
+def test_surface_finish(finish, name, roughness):
+    doc = minimal() if finish is None else minimal(finish=finish)
+    rocket = rocket_from_dict(doc)
+    assert rocket.finish == name
+    assert rocket.roughness == pytest.approx(roughness)
+
+
+def test_unknown_finish_lists_the_options():
+    with pytest.raises(RocketFileError, match=r"smooth_paint.*35um"):
+        rocket_from_dict(minimal(finish="glossy"))

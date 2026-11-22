@@ -7,8 +7,11 @@ The package is built up in layers. Available today:
 * :mod:`apogee.motor`: RASP ``.eng`` thrust curves, impulse and burning mass.
 * :mod:`apogee.components` and :mod:`apogee.rocket`: rocket parts loaded from
   YAML, with mass, centre of gravity and inertia through the burn.
+* :mod:`apogee.aero`: Barrowman centre of pressure and stability margin, drag
+  build-up against Mach and Reynolds number, and pitch damping.
 """
 
+from apogee.aero import Aerodynamics, DragBreakdown
 from apogee.atmosphere import AtmosphereState, OutOfAtmosphereError, atmosphere
 from apogee.components import MassProperties
 from apogee.earth import gravity
@@ -18,7 +21,9 @@ from apogee.rocket import Rocket, RocketFileError, load_rocket
 __version__ = "0.1.0"
 
 __all__ = [
+    "Aerodynamics",
     "AtmosphereState",
+    "DragBreakdown",
     "MassProperties",
     "Motor",
     "MotorFileError",

@@ -2,7 +2,7 @@
 
 **A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against OpenRocket, the hobby-rocketry standard.
 
-> **Status:** in active development (week of Nov 19, 2026). The atmosphere, motors and rocket mass model are done; aerodynamics and the flight solver land over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** in active development (week of Nov 19, 2026). The atmosphere, motors, rocket mass model and aerodynamics are done; the 6-DOF flight solver lands over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -53,6 +53,32 @@ apogee motor Estes_C6.eng        # impulse, class check, thrust curve
 
 Every setting is listed in [`docs/rocket.md`](docs/rocket.md). Typos get a pointed answer: `unknown setting 'lenght'; did you mean 'length'?`
 
+### Will it fly straight?
+
+```bash
+apogee aero my_rocket.yaml
+```
+
+`apogee aero` finds the centre of pressure, the static margin off the rail and at burnout, and the drag coefficient from Mach 0.1 to 2, split by source. For Kestrel:
+
+```
+            CG     CP  Margin
+          [mm]   [mm]   [cal]
+───────  ─────  ─────  ──────
+Liftoff  1,757  1,990    2.28
+Burnout  1,599  1,990    3.83
+Off the rail: stable. The margin grows as the CG moves forward through the burn.
+At 5° angle of attack the body's own lift moves the CP to 1,865 mm (liftoff margin 1.06 cal).
+
+Mach         Re  Friction   Fins   Base   Nose  Cd coast  Cd burn     CP
+      [million]                                                     [mm]
+────  ─────────  ────────  ─────  ─────  ─────  ────────  ───────  ─────
+0.30       17.6     0.339  0.020  0.132  0.000     0.491    0.420  1,992
+0.60       35.2     0.330  0.032  0.167  0.000     0.529    0.439  2,000
+```
+
+A margin under 1 calibre gets a plain warning and a fix (more fin area or nose weight). Add `finish: smooth_paint` (or `polished`, `unfinished`, ...) to the rocket file to see what a better finish is worth. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md).
+
 ### The atmosphere
 
 ```bash
@@ -81,12 +107,13 @@ air.density                # 1.0581 kg/m³
 
 - Load a rocket from a readable YAML file and a motor from any standard `.eng` thrust curve
 - Work out mass, centre of gravity and moments of inertia, and how they change as the motor burns
+- Find the centre of pressure and stability margin, and the drag coefficient across the speed range
 
 Coming this week:
 
 - Simulate a full flight in six degrees of freedom (position *and* orientation), from the launch rail to touchdown
-- Model drag, wind and weathercocking, and parachute recovery
-- Report apogee, max velocity, max acceleration, stability margin and landing distance
+- Model wind and weathercocking, and parachute recovery
+- Report apogee, max velocity, max acceleration and landing distance
 - Play the flight back in the browser
 
 ## For engineers
@@ -94,7 +121,7 @@ Coming this week:
 - Rigid-body 6-DOF equations with quaternion attitude, integrated with fixed-step RK4 and event detection (burnout, apogee, deployment, landing)
 - 1976 US Standard Atmosphere, -5 to 86 km, matching every published table value tested to within 0.007 % (the table's own rounding) and checked for hydrostatic balance. Method and validation: [`docs/atmosphere.md`](docs/atmosphere.md)
 - Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
-- Barrowman centre-of-pressure and normal-force slopes; component drag build-up (skin friction, pressure, base, fin) as a function of Mach and Reynolds number
+- Aerodynamics: Barrowman normal-force slopes and CP (nose CP from volume, fins with body interference and Diederich compressibility, Bonney/Ackeret above Mach 1.5), Galejs body lift at angle of attack, Niskanen/Hoerner drag build-up (roughness-limited skin friction, fin edges, base drag reduced by the motor plume) against Mach and Reynolds number, and pitch damping. Fin and whole-rocket CP match Barrowman's equations worked by hand to 10⁻⁶ and nose CPs match six closed forms. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md)
 - Validation suite: drag-free ballistic flight vs closed form, energy and quaternion-norm checks, and a reference flight compared to OpenRocket
 
 ## Development

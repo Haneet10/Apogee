@@ -11,6 +11,9 @@ Commands
     example rocket (Kestrel) is shown.
 ``apogee motor [FILE]``
     Summarise a RASP ``.eng`` thrust curve: impulse, class check, thrust.
+``apogee aero [FILE]``
+    Barrowman centre of pressure and stability margin through the burn, and
+    the drag coefficient by source from Mach 0.1 upwards.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from typing import TextIO
 import numpy as np
 
 from apogee import __version__
+from apogee.aero import Aerodynamics
 from apogee.atmosphere import MAX_ALTITUDE, MIN_ALTITUDE, OutOfAtmosphereError, atmosphere
 from apogee.components import MassProperties
 from apogee.motor import Motor, MotorFileError, load_motor
@@ -52,6 +56,17 @@ def parse_altitude(text: str) -> float:
         )
     value, unit = match.groups()
     return float(value) * _UNIT_TO_METRES[unit or "m"]
+
+
+def _mach(text: str) -> float:
+    """Parse a Mach number for argparse."""
+    try:
+        value = float(text)
+    except ValueError:
+        value = -1.0
+    if not 0.0 <= value <= 5.0:
+        raise argparse.ArgumentTypeError(f"Mach number must be between 0 and 5, got {text!r}")
+    return value
 
 
 def _sig(x: float, digits: int = 5) -> str:
@@ -315,6 +330,112 @@ def _cmd_rocket(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+_DEFAULT_MACHS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.5, 2.0]
+
+
+def stability_verdict(margin: float) -> str:
+    """One plain-language phrase about a static margin in calibres."""
+    if margin < 0.0:
+        return "UNSTABLE: the CP is ahead of the CG; add fin area or nose weight"
+    if margin < 1.0:
+        return "marginal: below the usual 1-calibre minimum; add fin area or nose weight"
+    if margin <= 3.0:
+        return "stable"
+    return "very stable: expect it to weathercock noticeably into the wind"
+
+
+def _cmd_aero(args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        rocket = load_rocket(args.file or example_path("rocket.yaml"))
+        aero = Aerodynamics(rocket)
+    except (FileNotFoundError, RocketFileError, ValueError) as exc:
+        return _error(exc)
+    d = aero.reference_diameter
+
+    out.write(f"{rocket.name}  ·  aerodynamics\n")
+    out.write(
+        f"Reference diameter {d * 1000:.0f} mm  ·  area {aero.reference_area * 1e4:.1f} cm²  ·  "
+        f"finish: {rocket.finish} ({rocket.roughness * 1e6:g} µm)\n\n"
+    )
+
+    parts = aero.components(0.0)
+    rows = [[c.name, f"{c.cn_alpha:.3f}", f"{c.cp * 1000:,.0f}"] for c in parts]
+    rows.append(
+        ["Whole rocket", f"{aero.cn_alpha(0.0):.3f}", f"{aero.center_of_pressure() * 1000:,.0f}"]
+    )
+    _table([("Component", ""), ("CNα", "1/rad"), ("CP", "mm")], rows, out, left=1)
+    out.write("Barrowman, small angle of attack, Mach 0. Positions from the nose tip.\n\n")
+
+    cp = aero.center_of_pressure()
+    states = [("Liftoff", 0.0)]
+    if rocket.motor is not None:
+        states.append(("Burnout", rocket.motor.burn_time))
+    margin_rows = []
+    margins = []
+    for label, t in states:
+        cg = rocket.mass_properties(t).cg
+        margins.append((cp - cg) / d)
+        margin_rows.append([label, f"{cg * 1000:,.0f}", f"{cp * 1000:,.0f}", f"{margins[-1]:.2f}"])
+    _table([("", ""), ("CG", "mm"), ("CP", "mm"), ("Margin", "cal")], margin_rows, out, left=1)
+    out.write(f"Off the rail: {stability_verdict(margins[0])}.")
+    if len(margins) > 1:
+        out.write(" The margin grows as the CG moves forward through the burn.")
+    out.write("\n")
+    alpha = math.radians(5.0)
+    out.write(
+        f"At 5° angle of attack the body's own lift moves the CP to "
+        f"{aero.center_of_pressure(0.0, alpha) * 1000:,.0f} mm "
+        f"(liftoff margin {aero.stability_margin(0.0, alpha=alpha):.2f} cal).\n\n"
+    )
+
+    machs: list[float] = args.mach or _DEFAULT_MACHS
+    drag_rows = []
+    for m in machs:
+        coast = aero.drag(m, args.altitude)
+        burn = aero.drag(m, args.altitude, thrusting=True)
+        drag_rows.append(
+            [
+                f"{m:.2f}",
+                f"{coast.reynolds / 1e6:.1f}",
+                f"{coast.friction:.3f}",
+                f"{coast.fin_pressure:.3f}",
+                f"{coast.base:.3f}",
+                f"{coast.nose:.3f}",
+                f"{coast.total:.3f}",
+                f"{burn.total:.3f}",
+                f"{aero.center_of_pressure(m) * 1000:,.0f}",
+            ]
+        )
+    _table(
+        [
+            ("Mach", ""),
+            ("Re", "million"),
+            ("Friction", ""),
+            ("Fins", ""),
+            ("Base", ""),
+            ("Nose", ""),
+            ("Cd coast", ""),
+            ("Cd burn", ""),
+            ("CP", "mm"),
+        ],
+        drag_rows,
+        out,
+    )
+    out.write(
+        f"Zero-lift drag coefficients at {args.altitude:,.0f} m, on the reference area. "
+        "'Cd burn' has the motor exhaust\nfilling part of the base.\n"
+    )
+    limit = aero.max_reliable_mach()
+    if any(m > limit for m in machs):
+        out.write(
+            f"Above Mach {limit:.1f} the nose's wave drag is not modelled yet for this "
+            "shape,\nso Cd there is a lower bound.\n"
+        )
+    for w in [*rocket.warnings, *aero.warnings]:
+        out.write(f"\nwarning: {w}\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``apogee`` argument parser."""
     parser = argparse.ArgumentParser(
@@ -368,6 +489,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mot.add_argument("--designation", metavar="NAME", help="which motor, if the file holds several")
     mot.set_defaults(handler=_cmd_motor)
+
+    aer = sub.add_parser(
+        "aero",
+        help="show centre of pressure, stability margin and drag",
+        description="Compute Barrowman normal-force slopes, the centre of pressure and the "
+        "static margin at liftoff and burnout, and the drag coefficient by source across "
+        "a range of Mach numbers.",
+        epilog="examples:  apogee aero   ·   apogee aero my_rocket.yaml --mach 0.3 0.6 0.9",
+    )
+    aer.add_argument(
+        "file", metavar="FILE", nargs="?", help="rocket description (.yaml); default: example"
+    )
+    aer.add_argument(
+        "--mach",
+        nargs="+",
+        type=_mach,
+        metavar="M",
+        help="Mach numbers for the drag table (default: 0.1 to 2)",
+    )
+    aer.add_argument(
+        "--altitude",
+        type=parse_altitude,
+        default=0.0,
+        metavar="ALT",
+        help="altitude for the drag table, e.g. 1500 or 5000ft (default: sea level)",
+    )
+    aer.set_defaults(handler=_cmd_aero)
     return parser
 
 

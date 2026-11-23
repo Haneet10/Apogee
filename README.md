@@ -2,7 +2,7 @@
 
 **A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against OpenRocket, the hobby-rocketry standard.
 
-> **Status:** in active development (week of Nov 19, 2026). The atmosphere, motors, rocket mass model and aerodynamics are done; the 6-DOF flight solver lands over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** in active development (week of Nov 19, 2026). The atmosphere, motors, rocket mass model, aerodynamics and the 6-DOF flight solver are done; flight events, the `apogee simulate` command and the OpenRocket comparison land over the coming days. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -79,6 +79,24 @@ Mach         Re  Friction   Fins   Base   Nose  Cd coast  Cd burn     CP
 
 A margin under 1 calibre gets a plain warning and a fix (more fin area or nose weight). Add `finish: smooth_paint` (or `polished`, `unfinished`, ...) to the rocket file to see what a better finish is worth. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md).
 
+### Fly it
+
+The 6-DOF solver is usable from Python today (the `apogee simulate` command arrives next):
+
+```python
+from apogee import Dynamics, LaunchSite, Wind, integrate, load_rocket
+
+rocket = load_rocket("examples/rocket.yaml")
+site = LaunchSite(rail_length=5.2, wind=Wind(speed=4.0, direction=270))   # 4 m/s from the west
+flight = integrate(Dynamics(rocket, site), t_end=60.0,
+                   stop=lambda t, y: t > 5 and y[5] < 0)                  # up to apogee
+
+flight.altitude.max()        # ≈ 4,990 m above the pad
+flight.position[-1]          # east, north, up [m]: it weathercocks and drifts ~260 m upwind
+```
+
+Thrust, gravity, drag, the air's sideways push at the centre of pressure, aerodynamic and jet damping, the launch rail and a wind that strengthens with height all act on the rocket at every step. Method and validation: [`docs/dynamics.md`](docs/dynamics.md).
+
 ### The atmosphere
 
 ```bash
@@ -108,17 +126,17 @@ air.density                # 1.0581 kg/m³
 - Load a rocket from a readable YAML file and a motor from any standard `.eng` thrust curve
 - Work out mass, centre of gravity and moments of inertia, and how they change as the motor burns
 - Find the centre of pressure and stability margin, and the drag coefficient across the speed range
+- Fly the rocket in six degrees of freedom (position *and* orientation) off a tilted rail, with wind and weathercocking
 
 Coming this week:
 
-- Simulate a full flight in six degrees of freedom (position *and* orientation), from the launch rail to touchdown
-- Model wind and weathercocking, and parachute recovery
+- Flight events and parachute recovery, from the launch rail to touchdown
 - Report apogee, max velocity, max acceleration and landing distance
 - Play the flight back in the browser
 
 ## For engineers
 
-- Rigid-body 6-DOF equations with quaternion attitude, integrated with fixed-step RK4 and event detection (burnout, apogee, deployment, landing)
+- Rigid-body 6-DOF equations with quaternion attitude, variable mass, aerodynamic and jet damping, launch-rail constraint and power-law wind, integrated with fixed-step RK4. Checked against vacuum ballistics (10⁻⁹ m), the rocket equation through Kestrel's real burn (5 × 10⁻⁸), torque-free precession with momentum and energy conservation, and the linear pitch-oscillation frequency (0.01 %). Method and validation: [`docs/dynamics.md`](docs/dynamics.md)
 - 1976 US Standard Atmosphere, -5 to 86 km, matching every published table value tested to within 0.007 % (the table's own rounding) and checked for hydrostatic balance. Method and validation: [`docs/atmosphere.md`](docs/atmosphere.md)
 - Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
 - Aerodynamics: Barrowman normal-force slopes and CP (nose CP from volume, fins with body interference and Diederich compressibility, Bonney/Ackeret above Mach 1.5), Galejs body lift at angle of attack, Niskanen/Hoerner drag build-up (roughness-limited skin friction, fin edges, base drag reduced by the motor plume) against Mach and Reynolds number, and pitch damping. Fin and whole-rocket CP match Barrowman's equations worked by hand to 10⁻⁶ and nose CPs match six closed forms. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md)

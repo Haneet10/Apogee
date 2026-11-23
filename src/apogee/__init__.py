@@ -9,12 +9,17 @@ The package is built up in layers. Available today:
   YAML, with mass, centre of gravity and inertia through the burn.
 * :mod:`apogee.aero`: Barrowman centre of pressure and stability margin, drag
   build-up against Mach and Reynolds number, and pitch damping.
+* :mod:`apogee.environment` and :mod:`apogee.rotation`: launch rail, wind
+  profile and quaternion attitude.
+* :mod:`apogee.dynamics`: 6-DOF equations of motion and the RK4 integrator.
 """
 
 from apogee.aero import Aerodynamics, DragBreakdown
 from apogee.atmosphere import AtmosphereState, OutOfAtmosphereError, atmosphere
 from apogee.components import MassProperties
+from apogee.dynamics import Dynamics, Trajectory, integrate
 from apogee.earth import gravity
+from apogee.environment import LaunchSite, Wind
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
@@ -24,15 +29,20 @@ __all__ = [
     "Aerodynamics",
     "AtmosphereState",
     "DragBreakdown",
+    "Dynamics",
+    "LaunchSite",
     "MassProperties",
     "Motor",
     "MotorFileError",
     "OutOfAtmosphereError",
     "Rocket",
     "RocketFileError",
+    "Trajectory",
+    "Wind",
     "__version__",
     "atmosphere",
     "gravity",
+    "integrate",
     "load_motor",
     "load_rocket",
 ]

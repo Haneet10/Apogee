@@ -38,3 +38,5 @@ jobs:
           apogee rocket examples/rocket.yaml
           apogee motor examples/motors/Cesaroni_M1670.eng
           apogee aero examples/rocket.yaml --mach 0.3 0.9
+          apogee simulate examples/rocket.yaml --wind 4 --dt 0.02 -o flight.csv
+          test "$(wc -l < flight.csv)" -gt 1000

@@ -14,6 +14,10 @@ Commands
 ``apogee aero [FILE]``
     Barrowman centre of pressure and stability margin through the burn, and
     the drag coefficient by source from Mach 0.1 upwards.
+``apogee simulate [FILE]``
+    Fly the rocket from the rail to touchdown: an event table, the headline
+    numbers (apogee, max speed and acceleration, rail-exit speed, descent
+    rates, landing point) and a CSV of every time step.
 """
 
 from __future__ import annotations
@@ -34,6 +38,9 @@ from apogee import __version__
 from apogee.aero import Aerodynamics
 from apogee.atmosphere import MAX_ALTITUDE, MIN_ALTITUDE, OutOfAtmosphereError, atmosphere
 from apogee.components import MassProperties
+from apogee.earth import G0
+from apogee.environment import LaunchSite, Wind
+from apogee.flight import Flight, FlightError, simulate
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
@@ -436,6 +443,133 @@ def _cmd_aero(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+_COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def compass(bearing: float) -> str:
+    """Nearest of the eight compass points, e.g. ``compass(260) == "W"``."""
+    return _COMPASS[round(bearing / 45.0) % 8]
+
+
+def _non_negative(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        value = -1.0
+    if value < 0.0 or not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"expected a number of zero or more, got {text!r}")
+    return value
+
+
+def _site_description(site: LaunchSite) -> str:
+    rail = f"{site.rail_length:g} m rail"
+    rail += f", tilted {site.tilt:g}° to {compass(site.heading)}" if site.tilt else ", vertical"
+    wind = site.wind
+    calm = (
+        "calm"
+        if wind.speed == 0.0
+        else (f"wind {wind.speed:g} m/s from {compass(wind.direction)} ({wind.direction:g}°)")
+    )
+    pad = f"pad at {site.altitude:,.0f} m" if site.altitude else "pad at sea level"
+    return f"{rail}  ·  {calm}  ·  {pad}"
+
+
+def default_csv_path(rocket_file: str | None, rocket: Rocket) -> Path:
+    """``kestrel-flight.csv``: the rocket's name, or its file name if it has none."""
+    named = rocket.name and rocket.name != "Unnamed rocket"
+    stem = rocket.name if named or not rocket_file else Path(rocket_file).stem
+    slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-") or "rocket"
+    return Path(f"{slug}-flight.csv")
+
+
+def _flight_report(flight: Flight, out: TextIO) -> None:
+    rows = []
+    for e in flight.events:
+        rows.append(
+            [
+                e.name,
+                f"{e.time:,.2f}",
+                f"{e.altitude:,.0f}" if e.altitude >= 100 else f"{abs(e.altitude):,.1f}",
+                f"{e.speed:,.1f}",
+                e.note,
+            ]
+        )
+    columns = [("Event", ""), ("Time", "s"), ("Altitude", "m"), ("Speed", "m/s")]
+    if any(e.note for e in flight.events):
+        columns.append(("", ""))
+    else:
+        rows = [r[:-1] for r in rows]
+    _table(columns, rows, out, left=1)
+    out.write("\n")
+
+    speed, t_speed = flight.max_speed
+    accel, t_accel = flight.max_acceleration
+    lines = [
+        (
+            "Apogee",
+            f"{flight.apogee:,.0f} m above the pad, {flight.time_to_apogee:.1f} s after ignition",
+        ),
+        ("Max speed", f"{speed:,.0f} m/s (Mach {flight.max_mach:.2f}) at {t_speed:.1f} s"),
+        ("Max acceleration", f"{accel / G0:.1f} g at {t_accel:.2f} s"),
+        ("Off the rail", f"{flight.rail_exit_speed:.1f} m/s"),
+    ]
+    rates = []
+    for e in flight.events:
+        if e.name.endswith(" opens"):
+            chute = e.name.removesuffix(" opens")
+            rate = flight.descent_rate(f"under {chute}")
+            if rate is not None:
+                rates.append(f"{rate:.1f} m/s under the {chute[0].lower()}{chute[1:]}")
+    if rates:
+        lines.append(("Descent", ", then ".join(rates)))
+    landing = flight.landing
+    if landing is not None:
+        dist = flight.landing_distance
+        where = (
+            "on the pad"
+            if dist < 1.0
+            else f"{dist:,.0f} m {compass(flight.landing_bearing)} of the pad "
+            f"(bearing {flight.landing_bearing:.0f}°)"
+        )
+        lines.append(("Landing", f"{where} at {-float(landing.velocity[2]):.1f} m/s"))
+    lines.append(("Flight time", f"{flight.flight_time:,.1f} s"))
+    width = max(len(k) for k, _ in lines)
+    for label, value in lines:
+        out.write(f"{label:<{width}}  {value}\n")
+
+
+def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        rocket = load_rocket(args.file or example_path("rocket.yaml"))
+        site = LaunchSite(
+            rail_length=args.rail,
+            tilt=args.tilt,
+            heading=args.heading,
+            altitude=args.elevation,
+            wind=Wind(speed=args.wind, direction=args.wind_from),
+        )
+        flight = simulate(rocket, site, dt=args.dt)
+    except (FileNotFoundError, RocketFileError, FlightError, ValueError) as exc:
+        return _error(exc)
+
+    motor = rocket.motor
+    assert motor is not None  # simulate() refuses rockets without one
+    out.write(f"{rocket.name}  ·  {motor.manufacturer} {motor.designation}\n")
+    out.write(_site_description(site) + "\n\n")
+    _flight_report(flight, out)
+
+    if args.output != "none":
+        path = Path(args.output) if args.output else default_csv_path(args.file, rocket)
+        try:
+            n = flight.write_csv(path)
+        except OSError as exc:
+            return _error(f"cannot write {path}: {exc.strerror or exc}")
+        out.write(f"\nWrote {n:,} time steps to {path}\n")
+    for w in [*rocket.warnings, *flight.warnings]:
+        out.write(f"\nwarning: {w}\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``apogee`` argument parser."""
     parser = argparse.ArgumentParser(
@@ -516,6 +650,76 @@ def build_parser() -> argparse.ArgumentParser:
         help="altitude for the drag table, e.g. 1500 or 5000ft (default: sea level)",
     )
     aer.set_defaults(handler=_cmd_aero)
+
+    sim = sub.add_parser(
+        "simulate",
+        help="fly the rocket from the rail to touchdown",
+        description="Simulate the whole flight in 6-DOF up to apogee and under the "
+        "parachutes to the ground. Prints the events and headline numbers and writes "
+        "every time step to a CSV file.",
+        epilog="examples:  apogee simulate   ·   "
+        "apogee simulate my_rocket.yaml --wind 5 --wind-from 270 --rail 2.4",
+    )
+    sim.add_argument(
+        "file", metavar="FILE", nargs="?", help="rocket description (.yaml); default: example"
+    )
+    default = LaunchSite()
+    sim.add_argument(
+        "--rail",
+        type=_non_negative,
+        default=default.rail_length,
+        metavar="M",
+        help=f"guided length of the launch rail in metres (default: {default.rail_length:g})",
+    )
+    sim.add_argument(
+        "--tilt",
+        type=_non_negative,
+        default=0.0,
+        metavar="DEG",
+        help="rail angle from vertical in degrees (default: 0)",
+    )
+    sim.add_argument(
+        "--heading",
+        type=float,
+        default=0.0,
+        metavar="DEG",
+        help="compass bearing the rail leans towards (default: 0, north)",
+    )
+    sim.add_argument(
+        "--wind",
+        type=_non_negative,
+        default=0.0,
+        metavar="M/S",
+        help="wind speed 10 m above the pad (default: 0, calm)",
+    )
+    sim.add_argument(
+        "--wind-from",
+        type=float,
+        default=270.0,
+        metavar="DEG",
+        help="compass bearing the wind blows from (default: 270, west)",
+    )
+    sim.add_argument(
+        "--elevation",
+        type=parse_altitude,
+        default=0.0,
+        metavar="ALT",
+        help="pad height above sea level, e.g. 1400 or 4600ft (default: 0)",
+    )
+    sim.add_argument(
+        "--dt",
+        type=float,
+        default=0.01,
+        metavar="S",
+        help="6-DOF time step in seconds (default: 0.01)",
+    )
+    sim.add_argument(
+        "-o",
+        "--output",
+        metavar="CSV",
+        help="where to write the time steps (default: <rocket>-flight.csv here; 'none' to skip)",
+    )
+    sim.set_defaults(handler=_cmd_simulate)
     return parser
 
 

@@ -23,13 +23,13 @@ site = LaunchSite(
 flight = integrate(Dynamics(rocket, site), t_end=60.0, dt=0.01,
                    stop=lambda t, y: t > 5 and y[5] < 0)   # stop once it starts falling
 
-flight.altitude.max()          # 4,988 m above the pad
-flight.position[-1]            # [-264, 0, 4988] m east, north, up: it flew 264 m upwind
+flight.altitude.max()          # 4,841 m above the pad
+flight.position[-1]            # [-254, 0, 4841] m east, north, up: it flew 254 m upwind
 flight.pitch_from_vertical     # degrees, at every step
 ```
 
-Day 5 adds event detection (rail exit, burnout, apogee, parachutes, landing)
-and the `apogee simulate` command; this page covers the equations underneath.
+For a whole flight with events, parachutes and a summary, use `apogee simulate`
+([`flight.md`](flight.md)); this page covers the equations underneath.
 
 ## State and frames
 
@@ -137,7 +137,6 @@ Every check below runs in CI (`tests/test_dynamics.py`).
 
 ### Kestrel, first look
 
-With no wind Kestrel leaves a 5.2 m rail at 42 m/s, peaks at 519 m/s
-(Mach 1.5) and reaches about 5,000 m. That peak is supersonic, and smooth-nose
-wave drag above Mach 0.8 is not modelled yet (it lands on Day 5), so today's
-apogee is an overestimate. A full comparison with OpenRocket is Day 6.
+With no wind Kestrel leaves a 5.2 m rail at 41 m/s, peaks at 514 m/s
+(Mach 1.5) and reaches 4,857 m. (Before the nose's wave drag was added on
+Day 5 it reached 5,005 m.) A full comparison with OpenRocket is Day 6.

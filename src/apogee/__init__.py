@@ -12,6 +12,8 @@ The package is built up in layers. Available today:
 * :mod:`apogee.environment` and :mod:`apogee.rotation`: launch rail, wind
   profile and quaternion attitude.
 * :mod:`apogee.dynamics`: 6-DOF equations of motion and the RK4 integrator.
+* :mod:`apogee.flight`: a full flight with events, parachute descent and a
+  summary (:func:`simulate`).
 """
 
 from apogee.aero import Aerodynamics, DragBreakdown
@@ -20,6 +22,7 @@ from apogee.components import MassProperties
 from apogee.dynamics import Dynamics, Trajectory, integrate
 from apogee.earth import gravity
 from apogee.environment import LaunchSite, Wind
+from apogee.flight import Event, Flight, FlightError, simulate
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
@@ -30,6 +33,9 @@ __all__ = [
     "AtmosphereState",
     "DragBreakdown",
     "Dynamics",
+    "Event",
+    "Flight",
+    "FlightError",
     "LaunchSite",
     "MassProperties",
     "Motor",
@@ -45,4 +51,5 @@ __all__ = [
     "integrate",
     "load_motor",
     "load_rocket",
+    "simulate",
 ]

@@ -63,8 +63,13 @@ S. F. Hoerner, *Fluid-Dynamic Drag* (1965):
 * Base drag ``0.12 + 0.13 M²`` below Mach 1 and ``0.25 / M`` above, on the
   base area not filled by the motor's exhaust while it burns.
 * Nose pressure drag ``0.8 sin²φ`` for a cone of half-angle ``φ``, rising to
-  Hoerner's supersonic cone value; smooth noses (ogive, von Kármán, Haack,
-  parabolic, ellipsoid) have none below Mach 0.8.
+  Hoerner's supersonic cone value. Smooth pointed noses (ogive, von Kármán,
+  Haack, parabolic) have none below Mach 0.8; above it they carry the wave
+  drag of supersonic slender-body theory, ``D/q = (π L²/4) Σ n A_n²`` for
+  ``S'(x) = L Σ A_n sin nθ`` (H. Ashley and M. Landahl, *Aerodynamics of Wings
+  and Bodies*, 1965, §9.4), blended in smoothly from Mach 0.8 to 1.2. For a
+  von Kármán nose this is von Kármán's ``Cd = (d/L)²``. Ellipsoids are blunt,
+  outside the theory, and remain unmodelled above Mach 0.8.
 
 *Pitch damping* uses the classic coefficient
 ``C = ½ ρ v A_ref Σ CNα_i (x_i − x_cg)²`` (G. H. Stine, *Handbook of Model
@@ -92,6 +97,7 @@ __all__ = [
     "base_drag_coefficient",
     "fin_leading_edge_drag",
     "skin_friction_coefficient",
+    "slender_body_wave_drag",
 ]
 
 #: Galejs's cross-flow factor for body lift at angle of attack.
@@ -103,8 +109,15 @@ _FIN_INTERFERENCE = {5: 0.948, 6: 0.913, 7: 0.854, 8: 0.810}
 #: Mach range over which fin lift is interpolated between subsonic and supersonic theory.
 _TRANSONIC = (0.9, 1.5)
 
-#: Above this Mach number smooth noses start to carry wave drag (not yet modelled).
+#: Smooth noses carry no wave drag below this Mach number.
 SMOOTH_NOSE_MACH_LIMIT = 0.8
+
+#: Smooth-nose wave drag reaches its slender-body value at this Mach number.
+WAVE_DRAG_FULL_MACH = 1.2
+
+#: Fourier terms and quadrature points for the slender-body wave drag.
+_WAVE_TERMS = 64
+_WAVE_POINTS = 4000
 
 _SLICES = 2000
 
@@ -172,6 +185,49 @@ def _cone_pressure_drag(mach: float, half_angle: float) -> float:
         return 2.1 * s**2 + 0.5 * s / math.sqrt(mach**2 - 1.0)
     edge = 2.1 * s**2 + 0.5 * s / math.sqrt(supersonic_at**2 - 1.0)
     return subsonic + (edge - subsonic) * (mach - 0.8) / (supersonic_at - 0.8)
+
+
+def slender_body_wave_drag(shape: NoseShape, fineness: float) -> float:
+    """Supersonic wave drag of a pointed nose on a cylinder, on its base area.
+
+    Slender-body theory gives the drag of a body whose cross-section area
+    ``S(x)`` starts and ends with zero slope as ``D/q = (π L²/4) Σ n A_n²``,
+    where ``S'(x) = L Σ A_n sin nθ`` and ``x = L (1 − cos θ) / 2`` (Ashley and
+    Landahl 1965, §9.4). It does not depend on Mach number. A smooth nose
+    blends tangentially into the body tube, so its slope is zero at both ends.
+
+    >>> round(slender_body_wave_drag(NoseShape.VON_KARMAN, 5.0), 5)  # von Kármán: (d/L)²
+    0.04
+
+    Args:
+        shape: A pointed nose profile (not conical or ellipsoid, whose slope
+            breaks at the shoulder or the tip).
+        fineness: Length over base diameter.
+
+    Raises:
+        ValueError: For conical and ellipsoid noses, or a non-positive fineness.
+    """
+    if shape in (NoseShape.CONICAL, NoseShape.ELLIPSOID):
+        raise ValueError(f"slender-body wave drag needs a smooth pointed nose, not {shape.value}")
+    if fineness <= 0.0:
+        raise ValueError(f"nose fineness must be positive, got {fineness}")
+    length, radius = 1.0, 0.5 / fineness
+    theta = (np.arange(_WAVE_POINTS) + 0.5) * (math.pi / _WAVE_POINTS)
+    x = 0.5 * length * (1.0 - np.cos(theta))
+    h = np.minimum(1e-6, 0.5 * np.minimum(x, length - x))
+    r_plus = shape.radius(x + h, length, radius)
+    r_minus = shape.radius(x - h, length, radius)
+    slope = math.pi * (r_plus**2 - r_minus**2) / (2.0 * h)  # S'(x)
+    n = np.arange(1, _WAVE_TERMS + 1)
+    a_n = (2.0 / _WAVE_POINTS) * (np.sin(np.outer(n, theta)) @ slope) / length
+    drag_over_q = 0.25 * math.pi * length**2 * float(np.sum(n * a_n**2))
+    return drag_over_q / (math.pi * radius**2)
+
+
+def _smoothstep(x: float, start: float, end: float) -> float:
+    """0 below ``start``, 1 above ``end``, a C¹ cubic in between."""
+    s = min(1.0, max(0.0, (x - start) / (end - start)))
+    return s * s * (3.0 - 2.0 * s)
 
 
 # --- Results --------------------------------------------------------------------
@@ -337,6 +393,11 @@ class Aerodynamics:
         self._nose_wetted = float(np.sum(math.pi * (edges[:-1] + edges[1:]) * ds))
         self._nose_plan_area = float(np.sum(2.0 * r) * dx)
         self._nose_plan_centroid = float(np.sum(2.0 * r * x) * dx) / self._nose_plan_area
+        self._nose_wave_cd = (
+            slender_body_wave_drag(n.shape, n.length / n.diameter)
+            if n.shape not in (NoseShape.CONICAL, NoseShape.ELLIPSOID)
+            else 0.0
+        )
 
     @property
     def body_wetted_area(self) -> float:
@@ -525,6 +586,9 @@ class Aerodynamics:
         if self._nose.shape is NoseShape.CONICAL:
             half_angle = math.atan2(0.5 * self._nose.diameter, self._nose.length)
             nose = _cone_pressure_drag(mach, half_angle) * self._nose_base_area / a_ref
+        else:
+            ramp = _smoothstep(mach, SMOOTH_NOSE_MACH_LIMIT, WAVE_DRAG_FULL_MACH)
+            nose = ramp * self._nose_wave_cd * self._nose_base_area / a_ref
 
         return DragBreakdown(
             friction=friction,
@@ -556,6 +620,6 @@ class Aerodynamics:
 
     def max_reliable_mach(self) -> float:
         """Highest Mach number at which every drag term is modelled."""
-        if self._nose.shape is NoseShape.CONICAL:
-            return math.inf
-        return SMOOTH_NOSE_MACH_LIMIT
+        if self._nose.shape is NoseShape.ELLIPSOID:
+            return SMOOTH_NOSE_MACH_LIMIT
+        return math.inf

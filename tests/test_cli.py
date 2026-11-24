@@ -1,11 +1,12 @@
 import argparse
 import csv
+import dataclasses
 import io
 
 import pytest
 
 from apogee import __version__
-from apogee.cli import main, parse_altitude
+from apogee.cli import example_path, main, parse_altitude
 
 
 @pytest.mark.parametrize(
@@ -148,7 +149,7 @@ def test_aero_shows_margin_verdict_and_drag_table():
     liftoff = next(line for line in text.splitlines() if line.startswith("Liftoff"))
     assert 1.5 < float(liftoff.split()[-1]) < 3.0
     assert "Cd coast" in text
-    assert "lower bound" in text  # rows above Mach 0.8 for a von Kármán nose
+    assert "lower bound" not in text  # von Kármán wave drag is modelled at every Mach
 
 
 def test_aero_custom_mach_list_and_altitude():
@@ -164,3 +165,41 @@ def test_aero_rejects_bad_mach(capsys):
     with pytest.raises(SystemExit):
         main(["aero", "--mach", "fast"])
     assert "between 0 and 5" in capsys.readouterr().err
+
+
+# --- simulate --------------------------------------------------------------------
+
+
+def test_simulate_prints_events_and_writes_csv(tmp_path):
+    path = tmp_path / "flight.csv"
+    code, text = run("simulate", "--wind", "4", "--dt", "0.02", "-o", str(path))
+    assert code == 0
+    assert "wind 4 m/s from W (270°)" in text
+    for word in ("Rail exit", "Apogee", "Main parachute opens", "Landing", "Max speed"):
+        assert word in text
+    landing = next(line for line in text.splitlines() if "of the pad" in line)
+    assert " E of the pad" in landing  # a west wind blows it east
+    assert "-0.0" not in text
+    rows = list(csv.DictReader(path.open()))
+    assert f"Wrote {len(rows):,} time steps" in text
+    assert rows[-1]["phase"] == "under Main parachute"
+
+
+def test_simulate_default_csv_name_and_skip(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    code, text = run("simulate", "--dt", "0.02", "-o", "none")
+    assert code == 0 and "Wrote" not in text and not list(tmp_path.iterdir())
+    from apogee.cli import default_csv_path
+    from apogee.rocket import load_rocket
+
+    rocket = load_rocket(example_path("rocket.yaml"))
+    assert str(default_csv_path("examples/rocket.yaml", rocket)) == "kestrel-flight.csv"
+    unnamed = dataclasses.replace(rocket, name="Unnamed rocket")
+    assert str(default_csv_path("rockets/My Rocket v2.yaml", unnamed)) == "my-rocket-v2-flight.csv"
+
+
+def test_simulate_reports_bad_input(capsys):
+    assert run("simulate", "missing.yaml")[0] == 2
+    assert "missing.yaml" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        run("simulate", "--wind", "-3")

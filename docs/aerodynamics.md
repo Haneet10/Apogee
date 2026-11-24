@@ -112,7 +112,7 @@ is referred to `A_ref`.
 | Fin leading edges | Rounded: stagnation-pressure drag `(1 − M²)^−0.417 − 1` below Mach 0.9, Hoerner's fits above, × cos² of the leading-edge sweep, on the edges' frontal area. |
 | Fin trailing edges | Square: base drag on their frontal area. |
 | Base | `0.12 + 0.13 M²` below Mach 1, `0.25 / M` above. While the motor burns its exhaust fills the nozzle area, so that part of the base has no base drag (`Cd burn` in the CLI). |
-| Nose pressure | Cone: `0.8 sin²φ` subsonic, Hoerner's supersonic cone value above Mach 1.3, linear between. Smooth shapes: zero below Mach 0.8. |
+| Nose pressure | Cone: `0.8 sin²φ` subsonic, Hoerner's supersonic cone value above Mach 1.3, linear between. Smooth pointed shapes: zero below Mach 0.8, then the slender-body wave drag below, blended in with a smooth cubic step between Mach 0.8 and 1.2. |
 
 The Reynolds number uses the rocket's length and the 1976 Standard Atmosphere's
 viscosity at the given altitude. Surface roughness comes from `finish:` in the
@@ -129,10 +129,41 @@ rocket file:
 or any height, such as `finish: 35um`. For a rocket of Kestrel's size the
 finish usually limits skin friction, which is why sanding and painting pay off.
 
-**Known limit.** Above Mach 0.8 smooth noses (ogive, von Kármán, Haack,
-parabolic, ellipsoid) start to carry wave drag that is not modelled yet, so Cd
-there is a lower bound and the CLI says so. This is scheduled with the full
-flight (Day 5), before the OpenRocket comparison.
+### Wave drag of smooth noses
+
+A smooth nose (ogive, von Kármán, LV-Haack, parabolic) blends into the body
+tube without a corner, so at subsonic speed the air flows round it with almost
+no pressure drag. Close to Mach 1 shock waves form and the nose starts to pay
+*wave drag*. Supersonic slender-body theory gives it from the nose's
+cross-section area `S(x)` alone (H. Ashley and M. Landahl, *Aerodynamics of
+Wings and Bodies*, 1965, §9.4). Writing the slope of the area as a sine series
+in `x = L (1 − cos θ) / 2`,
+
+```
+S'(x) = L Σ A_n sin nθ        D / q = (π L² / 4) Σ n A_n²
+```
+
+which holds whenever the slope is zero at both ends: at the tip of a pointed
+nose and where it meets the tube. Apogee finds the `A_n` numerically (64 terms
+from 4,000 points) for any profile. Two shapes have exact answers that check it:
+
+| Nose | Closed form (on base area) | f = 3 | f = 5 | f = 7 |
+|---|---|---|---|---|
+| von Kármán | `1 / f²` (von Kármán's minimum-drag nose) | 0.1111 | 0.0400 | 0.0204 |
+| LV-Haack | `(4 + 4.5 C²) / (4 f²)`, `C = 1/3` | 0.1250 | 0.0450 | 0.0230 |
+| Tangent ogive | numerical | 0.1301 | 0.0467 | 0.0238 |
+| Parabolic | numerical | 0.1296 | 0.0467 | 0.0238 |
+
+(`f` is length over diameter.) The theory does not depend on Mach number and
+is not valid right at Mach 1, so the drag is blended in with a smooth cubic
+step from zero at Mach 0.8 to the full value at Mach 1.2. For Kestrel's 5:1
+von Kármán nose this adds 0.040 to Cd above Mach 1.2, about 7 % of the
+transonic total, and lowers its apogee by about 150 m.
+
+**Known limit.** Ellipsoid noses are blunt at the tip, which slender-body
+theory cannot handle, so their wave drag is still not modelled: above Mach 0.8
+their Cd is a lower bound and `apogee aero` says so. Choose another shape for
+a rocket that goes transonic.
 
 ## Pitch damping
 
@@ -164,6 +195,7 @@ Every check is a test in [`tests/test_aero.py`](../tests/test_aero.py).
 | Cone and tube wetted areas vs closed forms | within 10⁻⁶ |
 | Base drag lost to the exhaust equals base Cd × nozzle area / A_ref | exact |
 | Damping coefficient by hand; linear in airspeed | within 10⁻⁶ |
+| Wave drag: von Kármán `1/f²` and LV-Haack `(4 + 4.5 C²)/(4 f²)` at f = 3, 5, 8; von Kármán lowest of the smooth shapes; rises steadily from Mach 0.8 to 1.2 | within 10⁻⁴ |
 | Kestrel: margin 1.5–3 cal at liftoff and larger at burnout; Cd 0.35–0.65 at Mach 0.3 | 2.28 / 3.83 cal; Cd 0.49 |
 
 The end-to-end check against OpenRocket's Kestrel model comes on Day 6.
@@ -182,3 +214,5 @@ The end-to-end check against OpenRocket's Kestrel model comes on Day 6.
 - R. T. Jones, "Properties of Low-Aspect-Ratio Pointed Wings at Speeds Below
   and Above the Speed of Sound", NACA Report 835, 1946.
 - G. H. Stine, *Handbook of Model Rocketry*, 7th ed., Wiley, 2004.
+- H. Ashley and M. Landahl, *Aerodynamics of Wings and Bodies*, Addison-Wesley, 1965 (Dover reprint 1985).
+- T. von Kármán, "The Problem of Resistance in Compressible Fluids", *Proc. 5th Volta Congress*, Rome, 1936.

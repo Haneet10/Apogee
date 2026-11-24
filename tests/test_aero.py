@@ -1,5 +1,7 @@
+import itertools
 import math
 
+import numpy as np
 import pytest
 
 from apogee.aero import (
@@ -7,8 +9,10 @@ from apogee.aero import (
     base_drag_coefficient,
     fin_leading_edge_drag,
     skin_friction_coefficient,
+    slender_body_wave_drag,
 )
 from apogee.cli import example_path
+from apogee.components import NoseShape
 from apogee.rocket import load_rocket, rocket_from_dict
 
 
@@ -302,7 +306,7 @@ def test_kestrel_drag_is_in_the_usual_range_for_a_finned_rocket():
     aero = Aerodynamics(load_rocket(example_path("rocket.yaml")))
     cd = aero.drag(0.3).total
     assert 0.35 < cd < 0.65
-    assert aero.max_reliable_mach() == pytest.approx(0.8)
+    assert aero.max_reliable_mach() == math.inf  # wave drag of its von Kármán nose is modelled
 
 
 def test_negative_mach_is_rejected():
@@ -320,3 +324,46 @@ def test_damping_coefficient_by_hand():
     expected = 0.5 * rho * v * aero.reference_area * arms
     assert aero.damping_coefficient(rho, v, cg) == pytest.approx(expected, rel=1e-6)
     assert aero.damping_coefficient(rho, 2 * v, cg) == pytest.approx(2 * expected, rel=1e-6)
+
+
+# --- Wave drag of smooth noses ---------------------------------------------------
+
+
+@pytest.mark.parametrize("fineness", [3.0, 5.0, 8.0])
+def test_von_karman_wave_drag_is_von_karmans_closed_form(fineness):
+    # Minimum-drag nose for its length and base: D/q = 4 S² / (π L²), i.e. Cd = (d/L)².
+    assert slender_body_wave_drag(NoseShape.VON_KARMAN, fineness) == pytest.approx(
+        1.0 / fineness**2, rel=1e-4
+    )
+
+
+@pytest.mark.parametrize("fineness", [3.0, 5.0, 8.0])
+def test_lv_haack_wave_drag_by_hand(fineness):
+    # S'(x) has two Fourier terms, A1 = 4S/(πL²) and A2 = 3CS/(πL²), so
+    # Cd = (4 + 4.5 C²) / (4 f²) with C = 1/3.
+    expected = (4.0 + 4.5 / 9.0) / (4.0 * fineness**2)
+    assert slender_body_wave_drag(NoseShape.LV_HAACK, fineness) == pytest.approx(expected, rel=1e-4)
+
+
+def test_von_karman_has_the_least_wave_drag_of_the_smooth_noses():
+    kinds = [NoseShape.OGIVE, NoseShape.PARABOLIC, NoseShape.LV_HAACK]
+    karman = slender_body_wave_drag(NoseShape.VON_KARMAN, 5.0)
+    assert all(slender_body_wave_drag(k, 5.0) > karman for k in kinds)
+
+
+def test_wave_drag_needs_a_smooth_pointed_nose():
+    for shape in (NoseShape.CONICAL, NoseShape.ELLIPSOID):
+        with pytest.raises(ValueError, match="smooth pointed"):
+            slender_body_wave_drag(shape, 5.0)
+    with pytest.raises(ValueError, match="fineness"):
+        slender_body_wave_drag(NoseShape.OGIVE, 0.0)
+
+
+def test_nose_wave_drag_rises_through_the_transonic_range():
+    aero = Aerodynamics(load_rocket(example_path("rocket.yaml")))
+    full = slender_body_wave_drag(NoseShape.VON_KARMAN, 510.0 / 102.0)
+    assert aero.drag(0.8).nose == 0.0
+    nose = [aero.drag(m).nose for m in np.linspace(0.8, 1.2, 9)]
+    assert all(b > a for a, b in itertools.pairwise(nose))
+    assert aero.drag(1.2).nose == pytest.approx(full)  # same reference area as the nose base
+    assert aero.drag(2.0).nose == pytest.approx(full)

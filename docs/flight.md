@@ -132,7 +132,9 @@ Every check is a test in [`tests/test_flight.py`](../tests/test_flight.py).
 | No parachute | ballistic to the ground, with a warning | ✓ |
 | Too heavy to lift off | refused with a fix | ✓ |
 
-The comparison with OpenRocket's Kestrel model is Day 6.
+The whole flight is compared with RocketPy, an independent simulator, in
+[validation.md](validation.md); scattered flights and landing zones are in
+[dispersion.md](dispersion.md).
 
 ## References
 

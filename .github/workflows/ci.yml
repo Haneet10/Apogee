@@ -40,3 +40,5 @@ jobs:
           apogee aero examples/rocket.yaml --mach 0.3 0.9
           apogee simulate examples/rocket.yaml --wind 4 --dt 0.02 -o flight.csv
           test "$(wc -l < flight.csv)" -gt 1000
+          apogee dispersion --wind 4 --runs 8 --dt 0.05 -o dispersion.csv
+          test "$(wc -l < dispersion.csv)" -eq 9

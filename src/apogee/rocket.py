@@ -34,7 +34,7 @@ from __future__ import annotations
 import difflib
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +147,9 @@ class Rocket:
         warnings: Non-fatal issues found while loading.
         finish: Name of the surface finish, for display.
         roughness: Surface roughness height [m], for skin-friction drag.
+        dry_mass_scale: Multiplier on the airframe's mass and inertia (CG kept),
+            for Monte Carlo scatter; 1 for the rocket as built.
+        drag_scale: Multiplier on the zero-lift drag coefficient; 1 as modelled.
     """
 
     name: str
@@ -157,6 +160,8 @@ class Rocket:
     warnings: tuple[str, ...] = ()
     finish: str = _DEFAULT_FINISH
     roughness: float = FINISHES[_DEFAULT_FINISH]
+    dry_mass_scale: float = 1.0
+    drag_scale: float = 1.0
 
     @property
     def length(self) -> float:
@@ -182,7 +187,8 @@ class Rocket:
 
     def dry_mass_properties(self) -> MassProperties:
         """The rocket without its motor."""
-        return MassProperties.combine([p.mass_properties() for p in self.parts])
+        dry = MassProperties.combine([p.mass_properties() for p in self.parts])
+        return dry if self.dry_mass_scale == 1.0 else dry.scaled_to(dry.mass * self.dry_mass_scale)
 
     def motor_mass_properties(self, t: float = 0.0) -> MassProperties | None:
         """The motor alone at time ``t`` after ignition, CG from the nose tip."""
@@ -206,6 +212,55 @@ class Rocket:
     def burnout_time(self) -> float:
         """Motor burn time [s] (0 without a motor)."""
         return self.motor.burn_time if self.motor else 0.0
+
+    def perturbed(
+        self,
+        *,
+        dry_mass: float = 1.0,
+        thrust: float = 1.0,
+        drag: float = 1.0,
+        parachute_cd: float = 1.0,
+    ) -> Rocket:
+        """A copy with scaled properties, as built rockets differ from the drawing.
+
+        Each argument is a multiplier (1 leaves it unchanged): ``dry_mass`` on
+        the airframe's mass and inertia, ``thrust`` on the motor's thrust curve
+        (and so its total impulse, at the same burn time and propellant mass),
+        ``drag`` on the zero-lift drag coefficient and ``parachute_cd`` on every
+        canopy's drag coefficient.
+
+        >>> from apogee.cli import example_path
+        >>> kestrel = load_rocket(example_path("rocket.yaml"))
+        >>> heavy = kestrel.perturbed(dry_mass=1.1)
+        >>> round(heavy.dry_mass_properties().mass / kestrel.dry_mass_properties().mass, 6)
+        1.1
+        """
+        for label, k in (
+            ("dry_mass", dry_mass),
+            ("thrust", thrust),
+            ("drag", drag),
+            ("parachute_cd", parachute_cd),
+        ):
+            if not k > 0.0:
+                raise ValueError(f"{label} multiplier must be positive, got {k}")
+        motor = self.motor
+        if motor is not None and thrust != 1.0:
+            motor = replace(motor, thrust=motor.thrust * thrust)
+        parts = self.parts
+        if parachute_cd != 1.0:
+            parts = tuple(
+                replace(p, component=replace(p.component, cd=p.component.cd * parachute_cd))
+                if isinstance(p.component, Parachute)
+                else p
+                for p in parts
+            )
+        return replace(
+            self,
+            parts=parts,
+            motor=motor,
+            dry_mass_scale=self.dry_mass_scale * dry_mass,
+            drag_scale=self.drag_scale * drag,
+        )
 
 
 # --- Loading ----------------------------------------------------------------

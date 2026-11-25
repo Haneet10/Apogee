@@ -1,0 +1,58 @@
+{
+  "simulator": "RocketPy 1.13.0",
+  "rocket": "examples/rocket.yaml",
+  "cases": {
+    "calm": {
+      "title": "Calm air, vertical 5 m rail",
+      "launch": {
+        "name": "calm",
+        "title": "Calm air, vertical 5 m rail",
+        "rail_length": 5.0,
+        "tilt": 0.0,
+        "heading": 0.0,
+        "wind_speed": 0.0
+      },
+      "apogee_m": 4858.580832581342,
+      "time_to_apogee_s": 27.43070321061097,
+      "max_speed_mps": 513.7266842072855,
+      "max_mach": 1.5261402148487981,
+      "max_acceleration_g": 19.543252542012358,
+      "rail_exit_speed_mps": 40.47704680300522,
+      "rail_exit_time_s": 0.3194262342985038,
+      "burnout_altitude_m": 1202.9819760867013,
+      "main_deploy_time_s": 262.06,
+      "landing_time_s": 315.14965363571304,
+      "landing_east_m": -9.767515865085047,
+      "landing_north_m": 0.0,
+      "landing_distance_m": 9.767515865085047,
+      "static_margin_liftoff_cal": 2.284587972915946,
+      "static_margin_burnout_cal": 3.830273300555226
+    },
+    "windy": {
+      "title": "4 m/s west wind, rail tilted 5\u00b0 east",
+      "launch": {
+        "name": "windy",
+        "title": "4 m/s west wind, rail tilted 5\u00b0 east",
+        "rail_length": 5.0,
+        "tilt": 5.0,
+        "heading": 90.0,
+        "wind_speed": 4.0
+      },
+      "apogee_m": 4855.658514971338,
+      "time_to_apogee_s": 27.427611171039548,
+      "max_speed_mps": 513.665314260553,
+      "max_mach": 1.5254724094155798,
+      "max_acceleration_g": 19.54821228827662,
+      "rail_exit_speed_mps": 40.4813168054984,
+      "rail_exit_time_s": 0.3193942705543062,
+      "burnout_altitude_m": 1201.948105178218,
+      "main_deploy_time_s": 261.94,
+      "landing_time_s": 315.03813686721753,
+      "landing_east_m": 2640.5873806009727,
+      "landing_north_m": 2.8082130111025844e-07,
+      "landing_distance_m": 2640.5873806009727,
+      "static_margin_liftoff_cal": 2.284587972915946,
+      "static_margin_burnout_cal": 3.830273300555226
+    }
+  }
+}

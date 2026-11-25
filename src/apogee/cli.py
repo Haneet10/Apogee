@@ -18,6 +18,10 @@ Commands
     Fly the rocket from the rail to touchdown: an event table, the headline
     numbers (apogee, max speed and acceleration, rail-exit speed, descent
     rates, landing point) and a CSV of every time step.
+``apogee dispersion [FILE]``
+    Monte Carlo: fly the rocket many times with the wind, rail, mass, impulse,
+    drag and parachutes scattered, then report the spread of apogees and the
+    landing zone as a 95 % ellipse, with a CSV of every flight.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import math
 import os
 import re
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
@@ -41,6 +46,7 @@ from apogee.components import MassProperties
 from apogee.earth import G0
 from apogee.environment import LaunchSite, Wind
 from apogee.flight import Flight, FlightError, simulate
+from apogee.montecarlo import Dispersion, Scatter, monte_carlo
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
@@ -570,6 +576,196 @@ def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+def default_dispersion_path(rocket_file: str | None, rocket: Rocket) -> Path:
+    """``kestrel-dispersion.csv``, named like :func:`default_csv_path`."""
+    flight_csv = default_csv_path(rocket_file, rocket)
+    return flight_csv.with_name(flight_csv.name.replace("-flight.csv", "-dispersion.csv"))
+
+
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"expected a whole number of 1 or more, got {text!r}")
+    return value
+
+
+def _dispersion_report(d: Dispersion, out: TextIO) -> None:
+    def stats(values: np.ndarray, nominal: float, fmt: str) -> list[str]:
+        p5, p95 = np.quantile(values, [0.05, 0.95])
+        return [
+            fmt.format(nominal),
+            fmt.format(values.mean()),
+            fmt.format(values.std(ddof=1)),
+            fmt.format(p5),
+            fmt.format(p95),
+        ]
+
+    def column(name: str) -> np.ndarray:
+        return np.array([getattr(s, name) for s in d.samples])
+
+    n = d.nominal
+    rows = [
+        ["Apogee", "[m]", *stats(d.apogee, n.apogee, "{:,.0f}")],
+        ["Max speed", "[m/s]", *stats(column("max_speed"), n.max_speed, "{:,.0f}")],
+        ["Off the rail", "[m/s]", *stats(column("rail_exit_speed"), n.rail_exit_speed, "{:.1f}")],
+        [
+            "Landing distance",
+            "[m]",
+            *stats(d.landing_distance, n.landing_distance, "{:,.0f}"),
+        ],
+        ["Landing speed", "[m/s]", *stats(column("landing_speed"), n.landing_speed, "{:.1f}")],
+    ]
+    columns = [
+        ("", ""),
+        ("", ""),
+        ("Nominal", ""),
+        ("Mean", ""),
+        ("1σ", ""),
+        ("5 %", ""),
+        ("95 %", ""),
+    ]
+    _table(columns, rows, out, left=2)
+    out.write("\n")
+
+    e = d.ellipse(0.95)
+    held = float(np.mean(e.contains(d.east, d.north)))
+    centre_dist = math.hypot(e.east, e.north)
+    bearing = math.degrees(math.atan2(e.east, e.north)) % 360.0
+    centre = (
+        "on the pad" if centre_dist < 1.0 else f"{centre_dist:,.0f} m {compass(bearing)} of the pad"
+    )
+    out.write(f"Landing zone  95 % ellipse centred {centre}\n")
+    out.write(
+        f"              {2 * e.semi_major:,.0f} m long (axis bearing {e.bearing:.0f}°) by "
+        f"{2 * e.semi_minor:,.0f} m wide; it holds {100 * held:.0f} % of these flights\n"
+    )
+    out.write(f"Recovery      95 % of flights land within {d.radius(0.95):,.0f} m of the pad\n")
+
+
+def _cmd_dispersion(args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        rocket = load_rocket(args.file or example_path("rocket.yaml"))
+        site = LaunchSite(
+            rail_length=args.rail,
+            tilt=args.tilt,
+            heading=args.heading,
+            altitude=args.elevation,
+            wind=Wind(speed=args.wind, direction=args.wind_from),
+        )
+        scatter = Scatter(
+            wind_speed=args.wind_scatter,
+            wind_direction=args.wind_from_scatter,
+            tilt=args.tilt_scatter,
+            heading=args.heading_scatter,
+            dry_mass=args.mass_scatter / 100.0,
+            thrust=args.impulse_scatter / 100.0,
+            drag=args.drag_scatter / 100.0,
+            parachute_cd=args.chute_scatter / 100.0,
+        )
+    except (FileNotFoundError, RocketFileError, ValueError) as exc:
+        return _error(exc)
+    if rocket.motor is None:
+        return _error("the rocket has no motor; add a `motor:` section to fly it")
+
+    motor = rocket.motor
+    out.write(f"{rocket.name}  ·  {motor.manufacturer} {motor.designation}\n")
+    out.write(_site_description(site) + "\n")
+    out.write(f"Scatter (1σ): {scatter.describe()}\n\n")
+    out.flush()
+
+    live = sys.stderr.isatty()
+    started = time.monotonic()
+
+    def progress(done: int, total: int) -> None:
+        if live:
+            sys.stderr.write(f"\rFlying {total:,} flights ... {done:,}/{total:,}")
+            sys.stderr.flush()
+
+    try:
+        d = monte_carlo(
+            rocket,
+            site,
+            runs=args.runs,
+            scatter=scatter,
+            seed=args.seed,
+            workers=args.workers,
+            dt=args.dt,
+            progress=progress,
+        )
+    except (FlightError, ValueError) as exc:
+        if live:
+            sys.stderr.write("\n")
+        return _error(exc)
+    if live:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+    elapsed = time.monotonic() - started
+    out.write(f"{len(d.samples):,} flights, seed {d.seed}, {elapsed:.0f} s\n\n")
+    _dispersion_report(d, out)
+
+    if args.output != "none":
+        path = Path(args.output) if args.output else default_dispersion_path(args.file, rocket)
+        try:
+            n = d.write_csv(path)
+        except OSError as exc:
+            return _error(f"cannot write {path}: {exc.strerror or exc}")
+        out.write(f"\nWrote {n:,} flights to {path}\n")
+    for w in rocket.warnings:
+        out.write(f"\nwarning: {w}\n")
+    return 0
+
+
+def _add_site_arguments(cmd: argparse.ArgumentParser) -> None:
+    """Launch rail, wind and pad options shared by ``simulate`` and ``dispersion``."""
+    default = LaunchSite()
+    cmd.add_argument(
+        "--rail",
+        type=_non_negative,
+        default=default.rail_length,
+        metavar="M",
+        help=f"guided length of the launch rail in metres (default: {default.rail_length:g})",
+    )
+    cmd.add_argument(
+        "--tilt",
+        type=_non_negative,
+        default=0.0,
+        metavar="DEG",
+        help="rail angle from vertical in degrees (default: 0)",
+    )
+    cmd.add_argument(
+        "--heading",
+        type=float,
+        default=0.0,
+        metavar="DEG",
+        help="compass bearing the rail leans towards (default: 0, north)",
+    )
+    cmd.add_argument(
+        "--wind",
+        type=_non_negative,
+        default=0.0,
+        metavar="M/S",
+        help="wind speed 10 m above the pad (default: 0, calm)",
+    )
+    cmd.add_argument(
+        "--wind-from",
+        type=float,
+        default=270.0,
+        metavar="DEG",
+        help="compass bearing the wind blows from (default: 270, west)",
+    )
+    cmd.add_argument(
+        "--elevation",
+        type=parse_altitude,
+        default=0.0,
+        metavar="ALT",
+        help="pad height above sea level, e.g. 1400 or 4600ft (default: 0)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``apogee`` argument parser."""
     parser = argparse.ArgumentParser(
@@ -663,49 +859,7 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument(
         "file", metavar="FILE", nargs="?", help="rocket description (.yaml); default: example"
     )
-    default = LaunchSite()
-    sim.add_argument(
-        "--rail",
-        type=_non_negative,
-        default=default.rail_length,
-        metavar="M",
-        help=f"guided length of the launch rail in metres (default: {default.rail_length:g})",
-    )
-    sim.add_argument(
-        "--tilt",
-        type=_non_negative,
-        default=0.0,
-        metavar="DEG",
-        help="rail angle from vertical in degrees (default: 0)",
-    )
-    sim.add_argument(
-        "--heading",
-        type=float,
-        default=0.0,
-        metavar="DEG",
-        help="compass bearing the rail leans towards (default: 0, north)",
-    )
-    sim.add_argument(
-        "--wind",
-        type=_non_negative,
-        default=0.0,
-        metavar="M/S",
-        help="wind speed 10 m above the pad (default: 0, calm)",
-    )
-    sim.add_argument(
-        "--wind-from",
-        type=float,
-        default=270.0,
-        metavar="DEG",
-        help="compass bearing the wind blows from (default: 270, west)",
-    )
-    sim.add_argument(
-        "--elevation",
-        type=parse_altitude,
-        default=0.0,
-        metavar="ALT",
-        help="pad height above sea level, e.g. 1400 or 4600ft (default: 0)",
-    )
+    _add_site_arguments(sim)
     sim.add_argument(
         "--dt",
         type=float,
@@ -720,6 +874,69 @@ def build_parser() -> argparse.ArgumentParser:
         help="where to write the time steps (default: <rocket>-flight.csv here; 'none' to skip)",
     )
     sim.set_defaults(handler=_cmd_simulate)
+
+    dis = sub.add_parser(
+        "dispersion",
+        help="Monte Carlo: scatter the inputs and map the landing zone",
+        description="Fly the rocket many times with the wind, rail angle, airframe mass, "
+        "motor impulse, drag and parachute drag each drawn from a normal distribution. "
+        "Prints the spread of apogees and speeds, the 95 % landing ellipse and the "
+        "recovery radius, and writes every flight to a CSV file.",
+        epilog="examples:  apogee dispersion --wind 4   ·   "
+        "apogee dispersion my_rocket.yaml --runs 500 --wind 6 --wind-scatter 2",
+    )
+    dis.add_argument(
+        "file", metavar="FILE", nargs="?", help="rocket description (.yaml); default: example"
+    )
+    _add_site_arguments(dis)
+    defaults = Scatter()
+    dis.add_argument(
+        "--runs",
+        type=_positive_int,
+        default=100,
+        metavar="N",
+        help="number of scattered flights (default: 100)",
+    )
+    dis.add_argument("--seed", type=int, default=1, metavar="N", help="random seed (default: 1)")
+    for flag, attr, unit, scale in (
+        ("--wind-scatter", "wind_speed", "m/s", 1.0),
+        ("--wind-from-scatter", "wind_direction", "degrees", 1.0),
+        ("--tilt-scatter", "tilt", "degrees", 1.0),
+        ("--heading-scatter", "heading", "degrees", 1.0),
+        ("--mass-scatter", "dry_mass", "%% of the airframe mass", 100.0),
+        ("--impulse-scatter", "thrust", "%% of the motor's total impulse", 100.0),
+        ("--drag-scatter", "drag", "%% of the drag coefficient", 100.0),
+        ("--chute-scatter", "parachute_cd", "%% of the parachute Cd", 100.0),
+    ):
+        value = getattr(defaults, attr) * scale
+        dis.add_argument(
+            flag,
+            type=_non_negative,
+            default=value,
+            metavar="X",
+            help=f"1σ scatter in {unit} (default: {value:g})",
+        )
+    dis.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="processes to fly in parallel (default: one per CPU, up to 8)",
+    )
+    dis.add_argument(
+        "--dt",
+        type=float,
+        default=0.02,
+        metavar="S",
+        help="6-DOF time step in seconds (default: 0.02)",
+    )
+    dis.add_argument(
+        "-o",
+        "--output",
+        metavar="CSV",
+        help="where to write the flights (default: <rocket>-dispersion.csv here; 'none' to skip)",
+    )
+    dis.set_defaults(handler=_cmd_dispersion)
     return parser
 
 

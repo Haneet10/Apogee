@@ -139,4 +139,5 @@ Every check below runs in CI (`tests/test_dynamics.py`).
 
 With no wind Kestrel leaves a 5.2 m rail at 41 m/s, peaks at 514 m/s
 (Mach 1.5) and reaches 4,857 m. (Before the nose's wave drag was added on
-Day 5 it reached 5,005 m.) A full comparison with OpenRocket is Day 6.
+Day 5 it reached 5,005 m.) RocketPy, flying the same rocket independently,
+agrees to 0.03 %: see [validation.md](validation.md).

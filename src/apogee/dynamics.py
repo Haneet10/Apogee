@@ -228,12 +228,15 @@ class Dynamics:
                 mach = airspeed / air.speed_of_sound
                 qbar = 0.5 * air.density * airspeed**2
                 area = self.aero.reference_area
-                cd = self.aero.drag(
-                    mach,
-                    thrusting=thrust_n > 0.0,
-                    speed_of_sound=air.speed_of_sound,
-                    kinematic_viscosity=air.kinematic_viscosity,
-                ).total
+                cd = (
+                    self.aero.drag(
+                        mach,
+                        thrusting=thrust_n > 0.0,
+                        speed_of_sound=air.speed_of_sound,
+                        kinematic_viscosity=air.kinematic_viscosity,
+                    ).total
+                    * self.rocket.drag_scale
+                )
                 drag = -qbar * area * cd * v_air / airspeed
 
                 if not on_rail:

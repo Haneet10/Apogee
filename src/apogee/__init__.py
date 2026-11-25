@@ -14,6 +14,8 @@ The package is built up in layers. Available today:
 * :mod:`apogee.dynamics`: 6-DOF equations of motion and the RK4 integrator.
 * :mod:`apogee.flight`: a full flight with events, parachute descent and a
   summary (:func:`simulate`).
+* :mod:`apogee.montecarlo`: scattered flights and the landing zone
+  (:func:`monte_carlo`).
 """
 
 from apogee.aero import Aerodynamics, DragBreakdown
@@ -23,6 +25,7 @@ from apogee.dynamics import Dynamics, Trajectory, integrate
 from apogee.earth import gravity
 from apogee.environment import LaunchSite, Wind
 from apogee.flight import Event, Flight, FlightError, simulate
+from apogee.montecarlo import Dispersion, Scatter, monte_carlo
 from apogee.motor import Motor, MotorFileError, load_motor
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
@@ -31,6 +34,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Aerodynamics",
     "AtmosphereState",
+    "Dispersion",
     "DragBreakdown",
     "Dynamics",
     "Event",
@@ -43,6 +47,7 @@ __all__ = [
     "OutOfAtmosphereError",
     "Rocket",
     "RocketFileError",
+    "Scatter",
     "Trajectory",
     "Wind",
     "__version__",
@@ -51,5 +56,6 @@ __all__ = [
     "integrate",
     "load_motor",
     "load_rocket",
+    "monte_carlo",
     "simulate",
 ]

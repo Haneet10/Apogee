@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "apogee"
 version = "0.1.0"
-description = "A 6-DOF rocket flight simulator you can read, validated against OpenRocket."
+description = "A 6-DOF rocket flight simulator you can read, validated against RocketPy."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Haneet Singh" }]
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "pyyaml>=6"]
-keywords = ["rocketry", "flight-simulation", "6dof", "aerospace", "atmosphere", "thrust-curve"]
+keywords = ["rocketry", "flight-simulation", "6dof", "aerospace", "monte-carlo", "thrust-curve"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

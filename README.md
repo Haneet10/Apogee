@@ -1,8 +1,10 @@
 # Apogee
 
-**A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against OpenRocket, the hobby-rocketry standard.
+**A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against RocketPy, an independent peer-reviewed simulator: the two agree on apogee to 0.03 %.
 
-> **Status:** in active development (week of Nov 19, 2026). Full flights from the rail to touchdown work today (`apogee simulate`); the OpenRocket comparison and a browser flight viewer land over the next two days. See [`docs/roadmap.md`](docs/roadmap.md).
+![Landing points of 300 simulated Kestrel flights scattered around a 95 % landing ellipse, 2 km east of the pad](docs/img/dispersion.png)
+
+> **Status:** in active development (week of Nov 19, 2026). Full flights (`apogee simulate`), Monte Carlo landing zones (`apogee dispersion`) and the RocketPy validation work today; a browser flight viewer lands next. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -57,6 +59,27 @@ Motor   CTI M1670-BS  ·  class M  ·  6,026 N·s  ·  3.90 s burn
 Thrust-to-weight at liftoff 14.4 average, 20.5 peak
 The CG moves 158 mm forward as the propellant burns.
 ```
+
+### Where will it land?
+
+```bash
+apogee dispersion --wind 4
+```
+
+`apogee dispersion` flies the rocket 100 times with the wind, rail angle, airframe mass, motor impulse, drag and parachutes each scattered by a realistic amount, then sizes the recovery area:
+
+```
+                         Nominal   Mean   1σ    5 %   95 %
+────────────────  ─────  ───────  ─────  ───  ─────  ─────
+Apogee            [m]      4,841  4,907  222  4,584  5,274
+Landing distance  [m]      2,045  2,004  493  1,181  2,721
+
+Landing zone  95 % ellipse centred 1,920 m E of the pad
+              2,961 m long (axis bearing 161°) by 2,244 m wide; it holds 94 % of these flights
+Recovery      95 % of flights land within 2,721 m of the pad
+```
+
+Every flight goes to a CSV. Each uncertainty has its own flag (`--wind-scatter 2`, `--impulse-scatter 5`, ...); the defaults and method are in [`docs/dispersion.md`](docs/dispersion.md).
 
 ### Your own rocket
 
@@ -161,10 +184,11 @@ air.density                # 1.0581 kg/m³
 - Fly the rocket in six degrees of freedom (position *and* orientation) off a tilted rail, with wind and weathercocking
 - Open drogue and main parachutes at apogee or a set altitude, drift with the wind and land
 - Report apogee, max speed and acceleration, rail-exit speed, descent rates and the landing point, and write every step to CSV
+- Scatter the wind, rail, build and motor over hundreds of flights and map the 95 % landing zone
+- Agree with an independent simulator (RocketPy) to 0.1 % on the ascent, with the remaining differences explained
 
 Coming this week:
 
-- Compare a reference flight with OpenRocket, and scatter the landing point with Monte Carlo runs
 - Play the flight back in the browser
 
 ## For engineers
@@ -174,7 +198,8 @@ Coming this week:
 - 1976 US Standard Atmosphere, -5 to 86 km, matching every published table value tested to within 0.007 % (the table's own rounding) and checked for hydrostatic balance. Method and validation: [`docs/atmosphere.md`](docs/atmosphere.md)
 - Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
 - Aerodynamics: Barrowman normal-force slopes and CP (nose CP from volume, fins with body interference and Diederich compressibility, Bonney/Ackeret above Mach 1.5), Galejs body lift at angle of attack, Niskanen/Hoerner drag build-up (roughness-limited skin friction, fin edges, base drag reduced by the motor plume) against Mach and Reynolds number, supersonic slender-body wave drag for smooth noses, and pitch damping. Fin and whole-rocket CP match Barrowman's equations worked by hand to 10⁻⁶ nose CPs match six closed forms, and nose wave drag matches von Kármán's `(d/L)²` to 10⁻⁴. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md)
-- Validation suite: drag-free ballistic flight vs closed form, energy and quaternion-norm checks, and a reference flight compared to OpenRocket
+- Validation against RocketPy 1.13 (independent 6-DOF code, LSODA integrator) on the same inputs: apogee, time to apogee, max speed, burnout altitude and deployment time within 0.1 %, static margin identical to three decimals, in calm air and in a crosswind. The one real gap, 146 m more crosswind drift over 2.7 km, is traced to the weathercocking transient off the rail (Apogee includes body lift at angle of attack; its restoring moment matches the hand calculation). Re-checked on every commit. Details: [`docs/validation.md`](docs/validation.md)
+- Monte Carlo dispersion: seeded, parallel, reproducible for any worker count; landing ellipse from the covariance's eigenvectors and the χ² quantile, tested on known rotated Gaussians (axes within 1 %, coverage within 0.6 %). Method: [`docs/dispersion.md`](docs/dispersion.md)
 
 ## Development
 

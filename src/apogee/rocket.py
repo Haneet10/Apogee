@@ -40,7 +40,9 @@ from typing import Any
 
 import yaml
 
+from apogee.avionics import FlightComputerSettings
 from apogee.components import (
+    Airbrakes,
     BodyTube,
     Component,
     FinSet,
@@ -162,6 +164,7 @@ class Rocket:
     roughness: float = FINISHES[_DEFAULT_FINISH]
     dry_mass_scale: float = 1.0
     drag_scale: float = 1.0
+    flight_computer: FlightComputerSettings | None = None
 
     @property
     def length(self) -> float:
@@ -184,6 +187,38 @@ class Rocket:
     def parachutes(self) -> list[Parachute]:
         """The recovery parachutes, in file order."""
         return [p.component for p in self.parts if isinstance(p.component, Parachute)]
+
+    @property
+    def airbrakes(self) -> Airbrakes | None:
+        """The airbrake module, if the rocket has one."""
+        found = [p.component for p in self.parts if isinstance(p.component, Airbrakes)]
+        return found[0] if found else None
+
+    @property
+    def airbrake_position(self) -> float | None:
+        """Nose tip to the airbrake module's front end [m], or ``None``."""
+        found = [p.position for p in self.parts if isinstance(p.component, Airbrakes)]
+        return found[0] if found else None
+
+    @property
+    def target_apogee(self) -> float | None:
+        """Apogee the flight computer aims for [m], if it has airbrakes and a target."""
+        if self.airbrakes is None or self.flight_computer is None:
+            return None
+        return self.flight_computer.target_apogee
+
+    def with_target(self, target_apogee: float | None) -> Rocket:
+        """A copy whose flight computer aims for ``target_apogee`` (``None`` stows the brakes).
+
+        >>> from apogee.cli import example_path
+        >>> ab = load_rocket(example_path("kestrel-airbrakes.yaml"))
+        >>> ab.with_target(4200.0).target_apogee
+        4200.0
+        """
+        if target_apogee is not None and self.airbrakes is None:
+            raise ValueError(f"{self.name} has no airbrakes to aim for an apogee with")
+        settings = self.flight_computer or FlightComputerSettings()
+        return replace(self, flight_computer=replace(settings, target_apogee=target_apogee))
 
     def dry_mass_properties(self) -> MassProperties:
         """The rocket without its motor."""
@@ -220,6 +255,7 @@ class Rocket:
         thrust: float = 1.0,
         drag: float = 1.0,
         parachute_cd: float = 1.0,
+        airbrake_cd: float = 1.0,
     ) -> Rocket:
         """A copy with scaled properties, as built rockets differ from the drawing.
 
@@ -227,7 +263,7 @@ class Rocket:
         the airframe's mass and inertia, ``thrust`` on the motor's thrust curve
         (and so its total impulse, at the same burn time and propellant mass),
         ``drag`` on the zero-lift drag coefficient and ``parachute_cd`` on every
-        canopy's drag coefficient.
+        canopy's drag coefficient and ``airbrake_cd`` on the airbrake panels'.
 
         >>> from apogee.cli import example_path
         >>> kestrel = load_rocket(example_path("rocket.yaml"))
@@ -240,6 +276,7 @@ class Rocket:
             ("thrust", thrust),
             ("drag", drag),
             ("parachute_cd", parachute_cd),
+            ("airbrake_cd", airbrake_cd),
         ):
             if not k > 0.0:
                 raise ValueError(f"{label} multiplier must be positive, got {k}")
@@ -251,6 +288,13 @@ class Rocket:
             parts = tuple(
                 replace(p, component=replace(p.component, cd=p.component.cd * parachute_cd))
                 if isinstance(p.component, Parachute)
+                else p
+                for p in parts
+            )
+        if airbrake_cd != 1.0:
+            parts = tuple(
+                replace(p, component=replace(p.component, cd=p.component.cd * airbrake_cd))
+                if isinstance(p.component, Airbrakes)
                 else p
                 for p in parts
             )
@@ -473,6 +517,32 @@ def _child(kind: str, data: object, where: str, parent: BodyTube) -> tuple[Compo
             cd=s.number("cd", 0.8),
             deploy_altitude=altitude,
         )
+    elif kind == "airbrakes":
+        s = _Spec(
+            data,
+            where,
+            _COMMON
+            | _PLACE
+            | {"length", "panels", "panel_width", "panel_height", "cd", "travel_time"}
+            | {"max_mach"},
+        )
+        try:
+            part = Airbrakes(
+                name=s.text("name", "Airbrakes"),
+                length=s.length("length"),
+                mass=s.mass("mass"),
+                diameter=inner,
+                panels=int(s.number("panels", 3)),
+                panel_width=s.length("panel_width"),
+                panel_height=s.length("panel_height"),
+                cd=s.number("cd", 1.2),
+                travel_time=_seconds(s, "travel_time", 0.5),
+                max_mach=s.number("max_mach", 0.8),
+            )
+        except ValueError as exc:
+            if isinstance(exc, RocketFileError):
+                raise
+            raise RocketFileError(f"{where}: {exc}") from None
     elif kind == "mass":
         s = _Spec(data, where, _COMMON | _PLACE | {"length", "diameter"})
         part = MassComponent(
@@ -482,7 +552,7 @@ def _child(kind: str, data: object, where: str, parent: BodyTube) -> tuple[Compo
             mass=s.mass("mass"),
         )
     else:
-        kinds = "fins, inner_tube, ring, bulkhead, parachute, mass"
+        kinds = "fins, inner_tube, ring, bulkhead, parachute, mass, airbrakes"
         raise RocketFileError(f"{where}: unknown part {kind!r}; body tubes can hold {kinds}")
     return part, s
 
@@ -504,7 +574,11 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
     Raises:
         RocketFileError: Describing the first problem found and how to fix it.
     """
-    top = _Spec(data, "rocket", {"name", "description", "finish", "motor", "components"})
+    top = _Spec(
+        data,
+        "rocket",
+        {"name", "description", "finish", "motor", "components", "flight_computer"},
+    )
     components = top.data.get("components")
     if not isinstance(components, list) or not components:
         raise RocketFileError("rocket: add a 'components' list, starting with a nose_cone")
@@ -545,6 +619,12 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
 
     motor, motor_pos = _motor(top, parts, base_dir, warnings)
     finish, roughness = _finish(top)
+    computer = _flight_computer(top)
+    brakes = [p for p in parts if isinstance(p.component, Airbrakes)]
+    if len(brakes) > 1:
+        raise RocketFileError("rocket: only one airbrake module is supported")
+    if computer is not None and computer.target_apogee is not None and not brakes:
+        warnings.append("flight_computer has a target apogee but the rocket has no airbrakes")
     return Rocket(
         name=top.text("name", "Unnamed rocket"),
         description=top.text("description", ""),
@@ -554,7 +634,91 @@ def rocket_from_dict(data: object, base_dir: Path | None = None) -> Rocket:
         warnings=tuple(warnings),
         finish=finish,
         roughness=roughness,
+        flight_computer=computer,
     )
+
+
+def _seconds(s: _Spec, key: str, default: float) -> float:
+    """A duration such as ``0.5`` or ``0.5s`` or ``500ms``."""
+    if not s.has(key):
+        return default
+    raw = s.data[key]
+    text = str(raw).strip().lower()
+    scale = 1.0
+    if text.endswith("ms"):
+        text, scale = text[:-2], 1e-3
+    elif text.endswith("s"):
+        text = text[:-1]
+    try:
+        value = float(text) * scale
+    except ValueError:
+        value = math.nan
+    if not (value >= 0.0 and math.isfinite(value)) or isinstance(raw, bool):
+        raise RocketFileError(f"{s.where}.{key}: expected a time such as 0.5s, got {raw!r}")
+    return value
+
+
+def _rate(s: _Spec, key: str, default: float) -> float:
+    """A frequency such as ``50`` or ``50Hz``."""
+    if not s.has(key):
+        return default
+    raw = s.data[key]
+    text = str(raw).strip().lower().removesuffix("hz").strip()
+    try:
+        value = float(text)
+    except ValueError:
+        value = math.nan
+    if not (value > 0.0 and math.isfinite(value)) or isinstance(raw, bool):
+        raise RocketFileError(f"{s.where}.{key}: expected a rate such as 50Hz, got {raw!r}")
+    return value
+
+
+def _flight_computer(top: _Spec) -> FlightComputerSettings | None:
+    """The optional ``flight_computer:`` section that drives the airbrakes."""
+    if not top.has("flight_computer"):
+        return None
+    s = _Spec(
+        top.data["flight_computer"],
+        "flight_computer",
+        {
+            "target_apogee",
+            "rate",
+            "control_rate",
+            "barometer_noise",
+            "accelerometer_noise",
+            "jerk_noise",
+            "lockout",
+        },
+    )
+    target = s.length("target_apogee") if s.has("target_apogee") else None
+    accel = 0.3
+    if s.has("accelerometer_noise"):
+        raw = s.data["accelerometer_noise"]
+        text = str(raw).strip().lower()
+        try:
+            if text.endswith("g"):
+                accel = float(text[:-1]) * 9.80665
+            else:
+                accel = float(text.removesuffix("m/s2").removesuffix("m/s²"))
+        except ValueError:
+            accel = math.nan
+        if not (accel >= 0.0 and math.isfinite(accel)):
+            raise RocketFileError(
+                "flight_computer.accelerometer_noise: expected e.g. 0.3 (m/s²) or 0.03g, "
+                f"got {raw!r}"
+            )
+    try:
+        return FlightComputerSettings(
+            target_apogee=target,
+            rate=_rate(s, "rate", 50.0),
+            control_rate=_rate(s, "control_rate", 10.0),
+            barometer_noise=s.length("barometer_noise", 1.5, zero=True),
+            accelerometer_noise=accel,
+            jerk_noise=s.number("jerk_noise", 20.0),
+            lockout=_seconds(s, "lockout", 1.0),
+        )
+    except ValueError as exc:
+        raise RocketFileError(f"flight_computer: {exc}") from None
 
 
 def _finish(top: _Spec) -> tuple[str, float]:

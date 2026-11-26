@@ -33,6 +33,11 @@ What acts on the rocket
   and motor state.
 * **Normal force** ``½ ρ V² A CN(α)`` across the body, acting at the centre
   of pressure, which turns the nose into the relative wind (weathercocking).
+* **Airbrake drag** ``½ ρ V² · cd · A_max · δ`` against the air-relative
+  velocity when the rocket has an airbrake module, with the panel extension
+  ``δ`` (0 to 1) set from outside through ``brake_deployment`` (see
+  :mod:`apogee.control`). The panels are symmetric, so their drag acts along
+  the axis and adds no turning moment.
 * **Aerodynamic pitch damping** ``−C ω`` and **jet damping**
   ``−ṁ (x_nozzle − x_cg)² ω``: exhaust leaving the nozzle carries away
   transverse momentum and slows the rocket's pitching (W. Box, C. Bishop and
@@ -134,6 +139,9 @@ class Dynamics:
         self.aero = Aerodynamics(self.rocket) if self.aerodynamics else None
         self.rail = self.site.rail_direction
         self.released = False
+        self.brakes = self.rocket.airbrakes
+        #: Airbrake panel extension, 0 (stowed) to 1 (fully out).
+        self.brake_deployment = 0.0
         motor = self.rocket.motor
         burn = self.rocket.burnout_time
         # Mass properties are tabulated once: rebuilding them from every part at
@@ -237,6 +245,8 @@ class Dynamics:
                     ).total
                     * self.rocket.drag_scale
                 )
+                if self.brakes is not None and self.brake_deployment > 0.0:
+                    cd += self.brakes.drag_area * self.brake_deployment / area
                 drag = -qbar * area * cd * v_air / airspeed
 
                 if not on_rail:

@@ -42,6 +42,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 __all__ = [
+    "Airbrakes",
     "BodyTube",
     "Component",
     "FinSet",
@@ -372,4 +373,70 @@ class MassComponent(Component):
 
     def computed(self) -> MassProperties:
         """Solid cylinder (or point mass)."""
+        return hollow_cylinder(self.mass, 0.5 * self.diameter, 0.0, self.length)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Airbrakes(Component):
+    """Deployable drag panels that a flight computer opens to shave off apogee.
+
+    The module is a ring of ``panels`` flat plates that swing or slide out of
+    the airframe into the airflow. Fully out, each presents ``panel_width ×
+    panel_height`` of frontal area; part-way out the exposed area grows in
+    proportion to the extension, so the drag added at deployment ``δ`` (0
+    stowed, 1 fully out) is ``½ ρ V² · cd · A_max · δ``.
+
+    For its mass the module is a solid cylinder of the airframe's inner
+    diameter (servo, linkage, panels, structure). Attributes:
+        mass: The whole module [kg].
+        diameter: Diameter used for the module's inertia [m].
+        panels: Number of panels.
+        panel_width: Width of one panel [m].
+        panel_height: How far one panel sticks out of the airframe when fully
+            deployed [m].
+        cd: Drag coefficient of the panels, on their exposed frontal area.
+            Flat plates normal to the flow sit near 1.1-1.3; 1.2 is typical
+            for airbrake panels behind a body (wind tunnel data compiled by
+            S. F. Hoerner, *Fluid-Dynamic Drag*, 1965, ch. 3).
+        travel_time: Time to go from stowed to fully deployed [s]; the
+            actuator moves no faster than this.
+        max_mach: The panels are only opened below this Mach number; above it
+            the loads and shock interactions are too uncertain (and most
+            competition rules ask for it).
+    """
+
+    mass: float
+    diameter: float
+    panels: int
+    panel_width: float
+    panel_height: float
+    cd: float = 1.2
+    travel_time: float = 0.5
+    max_mach: float = 0.8
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.panels <= 12:
+            raise ValueError(f"use 1 to 12 airbrake panels, got {self.panels}")
+        for label, value in (
+            ("panel_width", self.panel_width),
+            ("panel_height", self.panel_height),
+            ("cd", self.cd),
+            ("travel_time", self.travel_time),
+            ("max_mach", self.max_mach),
+        ):
+            if not (value > 0.0 and math.isfinite(value)):
+                raise ValueError(f"airbrake {label} must be positive, got {value}")
+
+    @property
+    def max_area(self) -> float:
+        """Frontal area of all panels fully deployed [m²]."""
+        return self.panels * self.panel_width * self.panel_height
+
+    @property
+    def drag_area(self) -> float:
+        """``cd · A`` with every panel fully out [m²]."""
+        return self.cd * self.max_area
+
+    def computed(self) -> MassProperties:
+        """Solid cylinder filling the airframe over the module's length."""
         return hollow_cylinder(self.mass, 0.5 * self.diameter, 0.0, self.length)

@@ -37,7 +37,7 @@ import numpy as np
 
 from apogee import __version__
 from apogee.aero import Aerodynamics
-from apogee.components import BodyTube, FinSet, NoseCone
+from apogee.components import Airbrakes, BodyTube, FinSet, NoseCone
 from apogee.earth import G0
 from apogee.flight import Flight
 
@@ -85,9 +85,18 @@ def _outline(flight: Flight) -> dict[str, Any]:
     nose: dict[str, Any] | None = None
     bodies: list[dict[str, float | str]] = []
     fins: list[dict[str, float | int]] = []
+    brakes: dict[str, float | int] | None = None
     for placed in rocket.parts:
         part = placed.component
-        if isinstance(part, NoseCone):
+        if isinstance(part, Airbrakes):
+            brakes = {
+                "start": round(placed.position, 4),
+                "length": round(part.length, 4),
+                "panels": part.panels,
+                "panel_width": round(part.panel_width, 4),
+                "panel_height": round(part.panel_height, 4),
+            }
+        elif isinstance(part, NoseCone):
             x = np.linspace(0.0, part.length, 25)
             r = part.shape.radius(x, part.length, part.diameter / 2.0)
             nose = {
@@ -127,6 +136,7 @@ def _outline(flight: Flight) -> dict[str, Any]:
         "nose": nose,
         "bodies": bodies,
         "fins": fins,
+        "airbrakes": brakes,
         "cg_liftoff": round(cg, 4),
         "cp": round(cp, 4),
         "margin_liftoff": round((cp - cg) / aero.reference_diameter, 3),
@@ -159,8 +169,41 @@ def _phases(flight: Flight, kept: list[int]) -> list[dict[str, Any]]:
     return runs
 
 
-def playback(flight: Flight) -> dict[str, Any]:
-    """The flight as a JSON-ready playback document (see the module docs)."""
+def _finite(values: Any, digits: int) -> list[float | None]:
+    return [None if not math.isfinite(float(v)) else round(float(v), digits) + 0.0 for v in values]
+
+
+def _airbrakes(flight: Flight, passive: Flight | None) -> dict[str, Any] | None:
+    """The flight computer's side of an airbrake flight."""
+    log = flight.airbrake_log
+    brakes = flight.rocket.airbrakes
+    if log is None or flight.target_apogee is None or brakes is None:
+        return None
+    cols = log.arrays()
+    return {
+        "target": round(flight.target_apogee, 2),
+        "error": round(flight.apogee - flight.target_apogee, 2),
+        "passive_apogee": None if passive is None else round(passive.apogee, 2),
+        "max_mach": brakes.max_mach,
+        "travel_time": brakes.travel_time,
+        "log": {
+            "t": _round(cols["t"], 3),
+            "altitude": _round(cols["altitude"], 2),
+            "velocity": _round(cols["velocity"], 2),
+            "predicted_apogee": _finite(cols["predicted_apogee"], 1),
+            "command": _round(cols["command"], 4),
+            "deployment": _round(cols["deployment"], 4),
+            "drag_factor": _round(cols["drag_factor"], 4),
+        },
+    }
+
+
+def playback(flight: Flight, passive: Flight | None = None) -> dict[str, Any]:
+    """The flight as a JSON-ready playback document (see the module docs).
+
+    For an airbrake flight, ``passive`` (the same rocket flown with the brakes
+    stowed) adds the apogee it would have reached.
+    """
     rocket = flight.rocket
     motor = rocket.motor
     site = flight.site
@@ -243,13 +286,19 @@ def playback(flight: Flight) -> dict[str, Any]:
             "acceleration_g": _round(np.linalg.norm(flight.acceleration[idx], axis=1) / G0, 3),
             "pitch": _round(traj.pitch_from_vertical[idx], 2),
             "attitude": [_round(row, 5) for row in q],
+            **(
+                {"airbrakes": _round(flight.brake_deployment[idx], 4)}
+                if flight.brake_deployment is not None
+                else {}
+            ),
         },
+        "airbrakes": _airbrakes(flight, passive),
     }
 
 
-def write_playback(flight: Flight, path: str | Path) -> int:
+def write_playback(flight: Flight, path: str | Path, passive: Flight | None = None) -> int:
     """Write :func:`playback` to ``path`` as compact JSON; returns the sample count."""
-    doc = playback(flight)
+    doc = playback(flight, passive)
     for key, column in doc["series"].items():
         if key != "attitude" and not all(math.isfinite(v) for v in column):
             raise ValueError(f"non-finite value in the {key!r} series; the flight did not solve")

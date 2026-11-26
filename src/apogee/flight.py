@@ -48,8 +48,10 @@ from typing import TextIO
 import numpy as np
 from numpy.typing import NDArray
 
+from apogee import rotation
 from apogee.atmosphere import atmosphere
 from apogee.components import Parachute
+from apogee.control import AirbrakeLog, FlightComputer
 from apogee.dynamics import (
     ATTITUDE,
     POSITION,
@@ -75,6 +77,7 @@ MIN_RAIL_EXIT_SPEED = 15.0
 MAX_LANDING_SPEED = 7.5
 
 _BISECTIONS = 40
+_NOSE = np.array([1.0, 0.0, 0.0])
 
 
 class FlightError(ValueError):
@@ -123,6 +126,10 @@ class Flight:
         acceleration: Acceleration over the ground at each sample [m/s²],
             shape ``(N, 3)``.
         warnings: Plain-language problems with the flight.
+        brake_deployment: Airbrake panel extension (0 to 1) at each sample,
+            for a rocket flown with its airbrakes active.
+        airbrake_log: What the flight computer estimated and commanded.
+        target_apogee: The apogee the flight computer aimed for [m].
     """
 
     rocket: Rocket
@@ -131,6 +138,9 @@ class Flight:
     phase: list[str]
     acceleration: Vector
     warnings: list[str] = field(default_factory=list)
+    brake_deployment: Vector | None = None
+    airbrake_log: AirbrakeLog | None = None
+    target_apogee: float | None = None
 
     # --- Lookups -------------------------------------------------------------
 
@@ -161,6 +171,11 @@ class Flight:
         """Seconds from ignition to apogee."""
         e = self.event("Apogee")
         return e.time if e else float(self.t[np.argmax(self.trajectory.altitude)])
+
+    @property
+    def apogee_error(self) -> float | None:
+        """Apogee minus the flight computer's target [m], if it flew to one."""
+        return None if self.target_apogee is None else self.apogee - self.target_apogee
 
     @property
     def mach(self) -> Vector:
@@ -342,6 +357,7 @@ class _Run:
         self.y: list[Vector] = []
         self.a: list[Vector] = []
         self.phase: list[str] = []
+        self.brake: list[float] = []
         self.events: list[Event] = []
         self.warnings: list[str] = []
 
@@ -350,6 +366,7 @@ class _Run:
         self.y.append(y.copy())
         self.a.append(a.copy())
         self.phase.append(phase)
+        self.brake.append(self.dyn.brake_deployment)
 
     def mark(self, name: str, t: float, y: Vector, note: str = "") -> None:
         self.events.append(Event(name, t, y[POSITION].copy(), y[VELOCITY].copy(), note))
@@ -410,6 +427,8 @@ def simulate(
     dt: float = 0.01,
     descent_dt: float = 0.05,
     t_max: float = 3600.0,
+    airbrakes: bool = True,
+    seed: int = 0,
 ) -> Flight:
     """Fly ``rocket`` from the rail to the ground.
 
@@ -421,6 +440,10 @@ def simulate(
         descent_dt: Time step under a parachute [s]; the point-mass descent is
             smooth, so a longer step loses nothing.
         t_max: Give up after this long [s].
+        airbrakes: Fly the rocket's airbrakes, if it has them and its
+            ``flight_computer`` has a target apogee (see :mod:`apogee.control`).
+            ``False`` keeps them stowed, for the passive comparison.
+        seed: Seed for the flight computer's sensor noise.
 
     Raises:
         FlightError: If the rocket has no motor or never leaves the pad.
@@ -442,6 +465,13 @@ def simulate(
     )
     open_chutes: list[Parachute] = []
     apogee = math.inf
+    target = rocket.target_apogee if airbrakes else None
+    computer = (
+        FlightComputer(rocket, site, rocket.flight_computer, seed=seed)
+        if target is not None and rocket.flight_computer is not None
+        else None
+    )
+    brakes_open = False
 
     def ascent_phase(t: float, released: bool) -> str:
         if not released:
@@ -478,6 +508,19 @@ def simulate(
         run.add(t_new, y_new, a1, phase)
         y_old, t_old = y, t
         t, y = t_new, y_new
+
+        # Flight computer: sense, estimate, plan, move the panels.
+        if computer is not None and not open_chutes:
+            axis_up = float(rotation.rotate(y[ATTITUDE], _NOSE)[2])
+            tilt = math.acos(min(max(axis_up, -1.0), 1.0))
+            deployment = computer.step(t, float(y[2]), float(a1[2]), tilt, step)
+            if deployment > 0.0 and not brakes_open:
+                brakes_open = True
+                run.mark("Airbrakes open", t, y)
+            elif deployment <= 0.0 and brakes_open:
+                brakes_open = False
+                run.mark("Airbrakes stowed", t, y)
+            dyn.brake_deployment = deployment
 
         # Rail exit
         if not dyn.released and not dyn.on_rail(y):
@@ -525,6 +568,11 @@ def simulate(
                     t, y = t_apo, ys
                     y[RATES] = 0.0
                     drag_area = sum(c.cd * c.canopy_area for c in open_chutes)
+                    if brakes_open:
+                        brakes_open = False
+                        run.mark("Airbrakes stowed", t_apo, ys)
+                    dyn.brake_deployment = 0.0
+                    run.brake[-1] = 0.0
                     f = _descent_derivative(dyn, drag_area)
                     step = descent_dt
                     run.phase[-1] = descent_phase()
@@ -563,6 +611,7 @@ def simulate(
     else:
         run.warnings.append(f"the flight had not landed after {t_max:,.0f} s; stopped there")
 
+    run.events.sort(key=lambda e: e.time)
     flight = Flight(
         rocket=rocket,
         trajectory=Trajectory(np.array(run.t), np.array(run.y), site),
@@ -570,6 +619,9 @@ def simulate(
         phase=run.phase,
         acceleration=np.array(run.a),
         warnings=run.warnings,
+        brake_deployment=np.array(run.brake) if computer is not None else None,
+        airbrake_log=computer.log if computer is not None else None,
+        target_apogee=target if computer is not None else None,
     )
     _check(flight)
     return flight

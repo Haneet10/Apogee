@@ -559,7 +559,16 @@ def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
             altitude=args.elevation,
             wind=Wind(speed=args.wind, direction=args.wind_from),
         )
+        if args.target is not None:
+            rocket = rocket.with_target(args.target)
+        if args.no_airbrakes and rocket.airbrakes is not None:
+            rocket = rocket.with_target(None)
         flight = simulate(rocket, site, dt=args.dt)
+        passive = (
+            simulate(rocket, site, dt=args.dt, airbrakes=False)
+            if flight.target_apogee is not None
+            else None
+        )
     except (FileNotFoundError, RocketFileError, FlightError, ValueError) as exc:
         return _error(exc)
 
@@ -568,6 +577,9 @@ def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
     out.write(f"{rocket.name}  ·  {motor.manufacturer} {motor.designation}\n")
     out.write(_site_description(site) + "\n\n")
     _flight_report(flight, out)
+    if passive is not None:
+        out.write("\n")
+        _airbrake_report(flight, passive, out)
 
     if args.output != "none":
         path = Path(args.output) if args.output else default_csv_path(args.file, rocket)
@@ -578,13 +590,54 @@ def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"\nWrote {n:,} time steps to {path}\n")
     if args.json:
         try:
-            n = write_playback(flight, args.json)
+            n = write_playback(flight, args.json, passive)
         except OSError as exc:
             return _error(f"cannot write {args.json}: {exc.strerror or exc}")
         out.write(f"Wrote a {n:,}-sample playback to {args.json}; open it at {VIEWER_URL}\n")
     for w in [*rocket.warnings, *flight.warnings]:
         out.write(f"\nwarning: {w}\n")
     return 0
+
+
+def _airbrake_report(flight: Flight, passive: Flight, out: TextIO) -> None:
+    """How the flight computer did against its target and against doing nothing."""
+    target = flight.target_apogee
+    log = flight.airbrake_log
+    assert target is not None and log is not None
+    error = flight.apogee - target
+    cols = log.arrays()
+    deployment = cols["deployment"]
+    opened = flight.event("Airbrakes open")
+    lines = [
+        ("Target apogee", f"{target:,.0f} m"),
+        ("Reached", f"{flight.apogee:,.1f} m ({error:+.1f} m, {100 * error / target:+.2f} %)"),
+        (
+            "Without airbrakes",
+            f"{passive.apogee:,.0f} m ({passive.apogee - target:+,.0f} m)",
+        ),
+    ]
+    if opened is not None:
+        busy = deployment[deployment > 0.0]
+        mach = opened.speed / _sound(flight.site.altitude + opened.altitude)
+        lines.append(
+            (
+                "Airbrakes",
+                f"opened at {opened.time:.1f} s, Mach {mach:.2f}; "
+                f"{100 * float(busy.mean()):.0f} % open on average, "
+                f"{100 * float(deployment.max()):.0f} % at most",
+            )
+        )
+    else:
+        lines.append(("Airbrakes", "stayed stowed: the rocket would not reach the target"))
+    k = float(cols["drag_factor"][-1])
+    lines.append(("Drag learned", f"{k:.3f} × the pre-flight drag model"))
+    width = max(len(k) for k, _ in lines)
+    for label, value in lines:
+        out.write(f"{label:<{width}}  {value}\n")
+
+
+def _sound(height: float) -> float:
+    return float(atmosphere(min(max(height, -5000.0), 86000.0)).speed_of_sound)
 
 
 def default_dispersion_path(rocket_file: str | None, rocket: Rocket) -> Path:
@@ -727,6 +780,123 @@ def _cmd_dispersion(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"\nWrote {n:,} flights to {path}\n")
     for w in rocket.warnings:
         out.write(f"\nwarning: {w}\n")
+    return 0
+
+
+def _cmd_airbrakes(args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        rocket = load_rocket(args.file or example_path("kestrel-airbrakes.yaml"))
+        if args.target is not None:
+            rocket = rocket.with_target(args.target)
+        site = LaunchSite(
+            rail_length=args.rail,
+            tilt=args.tilt,
+            heading=args.heading,
+            altitude=args.elevation,
+            wind=Wind(speed=args.wind, direction=args.wind_from),
+        )
+    except (FileNotFoundError, RocketFileError, ValueError) as exc:
+        return _error(exc)
+    target = rocket.target_apogee
+    if rocket.airbrakes is None:
+        return _error(f"{rocket.name} has no airbrakes; add an 'airbrakes' part to a body tube")
+    if target is None:
+        return _error("no target apogee: set flight_computer.target_apogee or pass --target")
+    motor = rocket.motor
+    if motor is None:
+        return _error("the rocket has no motor; add a `motor:` section to fly it")
+
+    scatter = Scatter()
+    out.write(f"{rocket.name}  ·  {motor.manufacturer} {motor.designation}\n")
+    out.write(_site_description(site) + "\n")
+    out.write(f"Target apogee {target:,.0f} m\n")
+    out.write(f"Scatter (1σ): {scatter.describe(airbrakes=True)}\n\n")
+    out.flush()
+    live = sys.stderr.isatty()
+    started = time.monotonic()
+    results = {}
+    for label, flying in (("Passive", False), ("Airbrakes", True)):
+
+        def progress(done: int, total: int, label: str = label) -> None:
+            if live:
+                sys.stderr.write(f"\r{label}: flying {total:,} flights ... {done:,}/{total:,}")
+                sys.stderr.flush()
+
+        try:
+            results[label] = monte_carlo(
+                rocket,
+                site,
+                runs=args.runs,
+                scatter=scatter,
+                seed=args.seed,
+                workers=args.workers,
+                dt=args.dt,
+                progress=progress,
+                airbrakes=flying,
+            )
+        except (FlightError, ValueError) as exc:
+            if live:
+                sys.stderr.write("\n")
+            return _error(exc)
+    if live:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+    elapsed = time.monotonic() - started
+    out.write(f"{args.runs:,} flights each way, seed {args.seed}, {elapsed:.0f} s\n\n")
+
+    rows = []
+    for label, d in results.items():
+        err = d.apogee - target
+        rows.append(
+            [
+                label,
+                f"{d.apogee.mean():,.0f}",
+                f"{err.mean():+,.1f}",
+                f"{err.std(ddof=1):,.1f}",
+                f"{np.abs(err).max():,.1f}",
+                f"{100 * np.mean(np.abs(err) <= 15.0):.0f} %",
+            ]
+        )
+    columns = [
+        ("", ""),
+        ("Mean apogee", "m"),
+        ("Mean miss", "m"),
+        ("1σ miss", "m"),
+        ("Worst miss", "m"),
+        ("Within ±15 m", ""),
+    ]
+    _table(columns, rows, out, left=1)
+    passive, active = results["Passive"], results["Airbrakes"]
+    spread_p = float((passive.apogee - target).std(ddof=1))
+    spread_a = float((active.apogee - target).std(ddof=1))
+    out.write(
+        f"\nThe airbrakes cut the 1σ apogee scatter from {spread_p:,.0f} m to {spread_a:,.1f} m.\n"
+    )
+    short = int(np.sum(passive.apogee < target))
+    if short:
+        out.write(
+            f"{short} of {args.runs} flights could not reach the target even with the "
+            "airbrakes stowed; they set the worst misses. Aim lower or fly a bigger motor.\n"
+        )
+    if args.output != "none":
+        path = (
+            Path(args.output)
+            if args.output
+            else Path(
+                str(default_dispersion_path(args.file, rocket)).replace("-dispersion", "-airbrakes")
+            )
+        )
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                writer = csv.writer(fh, lineterminator="\n")
+                writer.writerow(["run", "passive_apogee_m", "airbrakes_apogee_m", "target_m"])
+                for sp, sa in zip(passive.samples, active.samples, strict=True):
+                    writer.writerow(
+                        [sp.run, f"{sp.apogee:.2f}", f"{sa.apogee:.2f}", f"{target:.1f}"]
+                    )
+        except OSError as exc:
+            return _error(f"cannot write {path}: {exc.strerror or exc}")
+        out.write(f"\nWrote {args.runs:,} paired flights to {path}\n")
     return 0
 
 
@@ -889,6 +1059,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="also write a playback file for the browser viewer (" + VIEWER_URL + ")",
     )
+    sim.add_argument(
+        "--target",
+        type=parse_altitude,
+        metavar="ALT",
+        help="apogee for the airbrakes to aim for, e.g. 4400 or 14000ft "
+        "(default: the rocket file's flight_computer target)",
+    )
+    sim.add_argument(
+        "--no-airbrakes",
+        action="store_true",
+        help="keep the airbrakes stowed and fly passively",
+    )
     sim.set_defaults(handler=_cmd_simulate)
 
     dis = sub.add_parser(
@@ -953,6 +1135,59 @@ def build_parser() -> argparse.ArgumentParser:
         help="where to write the flights (default: <rocket>-dispersion.csv here; 'none' to skip)",
     )
     dis.set_defaults(handler=_cmd_dispersion)
+
+    ab = sub.add_parser(
+        "airbrakes",
+        help="Monte Carlo: how close do the airbrakes fly to the target apogee?",
+        description="Fly the rocket many times with scattered wind, rail angle, mass, "
+        "impulse and drag, once with the airbrakes stowed and once with the flight "
+        "computer flying them (each flight with its own sensor noise). Prints how far "
+        "each misses the target apogee.",
+        epilog="examples:  apogee airbrakes   ·   "
+        "apogee airbrakes my_rocket.yaml --target 3000 --runs 200 --wind 4",
+    )
+    ab.add_argument(
+        "file",
+        metavar="FILE",
+        nargs="?",
+        help="rocket description with airbrakes (.yaml); default: Kestrel AB example",
+    )
+    _add_site_arguments(ab)
+    ab.add_argument(
+        "--target",
+        type=parse_altitude,
+        metavar="ALT",
+        help="apogee to aim for (default: the rocket file's flight_computer target)",
+    )
+    ab.add_argument(
+        "--runs",
+        type=_positive_int,
+        default=50,
+        metavar="N",
+        help="scattered flights each way (default: 50)",
+    )
+    ab.add_argument("--seed", type=int, default=1, metavar="N", help="random seed (default: 1)")
+    ab.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="processes to fly in parallel (default: one per CPU, up to 8)",
+    )
+    ab.add_argument(
+        "--dt",
+        type=float,
+        default=0.02,
+        metavar="S",
+        help="6-DOF time step in seconds (default: 0.02)",
+    )
+    ab.add_argument(
+        "-o",
+        "--output",
+        metavar="CSV",
+        help="where to write the paired apogees (default: <rocket>-airbrakes.csv; 'none' to skip)",
+    )
+    ab.set_defaults(handler=_cmd_airbrakes)
     return parser
 
 

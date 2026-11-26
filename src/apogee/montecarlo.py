@@ -74,6 +74,9 @@ class Scatter:
         thrust: Motor total impulse, as a fraction.
         drag: Zero-lift drag coefficient, as a fraction.
         parachute_cd: Canopy drag coefficients, as a fraction.
+        airbrake_cd: Drag coefficient of the airbrake panels, as a fraction
+            (rockets without airbrakes ignore it). The flight computer is not
+            told; it has to cope.
     """
 
     wind_speed: float = 1.0
@@ -84,6 +87,7 @@ class Scatter:
     thrust: float = 0.03
     drag: float = 0.05
     parachute_cd: float = 0.05
+    airbrake_cd: float = 0.10
 
     def __post_init__(self) -> None:
         for f in fields(self):
@@ -96,7 +100,7 @@ class Scatter:
         """No scatter at all: every run is the nominal flight."""
         return cls(**{f.name: 0.0 for f in fields(cls)})
 
-    def describe(self) -> str:
+    def describe(self, airbrakes: bool = False) -> str:
         """One line for reports, e.g. ``wind ±1 m/s, ±15°  ·  rail ±0.5°, ±5°  ·  mass ±2 %...``."""
 
         def pct(x: float) -> str:
@@ -107,6 +111,7 @@ class Scatter:
             f"rail ±{self.tilt:g}°, ±{self.heading:g}°  ·  "
             f"mass {pct(self.dry_mass)}  ·  impulse {pct(self.thrust)}  ·  "
             f"drag {pct(self.drag)}  ·  parachute Cd {pct(self.parachute_cd)}"
+            + (f"  ·  airbrake Cd {pct(self.airbrake_cd)}" if airbrakes else "")
         )
 
 
@@ -129,6 +134,7 @@ class Sample:
     thrust: float
     drag: float
     parachute_cd: float
+    airbrake_cd: float = 1.0
     apogee: float = math.nan
     max_speed: float = math.nan
     rail_exit_speed: float = math.nan
@@ -289,6 +295,8 @@ def draw_samples(site: LaunchSite, scatter: Scatter, runs: int, seed: int) -> li
         raise ValueError(f"runs must be at least 1, got {runs}")
     rng = np.random.default_rng(seed)
     z = rng.standard_normal((runs, 8))
+    # Drawn from a separate stream so adding it left the other inputs unchanged.
+    z_brake = np.random.default_rng([seed, 1]).standard_normal(runs)
     lo, hi = _MULTIPLIER_RANGE
     samples = []
     for i, row in enumerate(z):
@@ -307,16 +315,24 @@ def draw_samples(site: LaunchSite, scatter: Scatter, runs: int, seed: int) -> li
                 thrust=float(np.clip(1.0 + scatter.thrust * row[5], lo, hi)),
                 drag=float(np.clip(1.0 + scatter.drag * row[6], lo, hi)),
                 parachute_cd=float(np.clip(1.0 + scatter.parachute_cd * row[7], lo, hi)),
+                airbrake_cd=float(np.clip(1.0 + scatter.airbrake_cd * z_brake[i], lo, hi)),
             )
         )
     return samples
 
 
-def _fly(args: tuple[Rocket, LaunchSite, Sample, float, float]) -> Sample:
+_Job = tuple[Rocket, LaunchSite, Sample, float, float, bool]
+
+
+def _fly(args: _Job) -> Sample:
     """Fly one sample (a top-level function so worker processes can run it)."""
-    rocket, site, s, dt, descent_dt = args
+    rocket, site, s, dt, descent_dt, airbrakes = args
     flown = rocket.perturbed(
-        dry_mass=s.dry_mass, thrust=s.thrust, drag=s.drag, parachute_cd=s.parachute_cd
+        dry_mass=s.dry_mass,
+        thrust=s.thrust,
+        drag=s.drag,
+        parachute_cd=s.parachute_cd,
+        airbrake_cd=s.airbrake_cd,
     )
     wind = Wind(
         speed=s.wind_speed,
@@ -331,7 +347,7 @@ def _fly(args: tuple[Rocket, LaunchSite, Sample, float, float]) -> Sample:
         altitude=site.altitude,
         wind=wind,
     )
-    flight = simulate(flown, here, dt=dt, descent_dt=descent_dt)
+    flight = simulate(flown, here, dt=dt, descent_dt=descent_dt, airbrakes=airbrakes, seed=s.run)
     landing = flight.landing
     east = north = speed = math.nan
     if landing is not None:
@@ -361,6 +377,7 @@ def monte_carlo(
     dt: float = 0.02,
     descent_dt: float = 0.25,
     progress: Callable[[int, int], None] | None = None,
+    airbrakes: bool = True,
 ) -> Dispersion:
     """Fly ``rocket`` ``runs`` times with scattered inputs.
 
@@ -376,6 +393,8 @@ def monte_carlo(
             under 0.3 m against 0.01 s, far below the scatter.
         descent_dt: Time step under the parachutes [s].
         progress: Called as ``progress(done, total)`` after each flight.
+        airbrakes: Fly the airbrakes of a rocket that has them (each run with
+            its own sensor noise); ``False`` keeps them stowed.
     """
     site = site or LaunchSite()
     scatter = scatter or Scatter()
@@ -391,7 +410,7 @@ def monte_carlo(
         drag=1.0,
         parachute_cd=1.0,
     )
-    jobs = [(rocket, site, s, dt, descent_dt) for s in [nominal_in, *samples]]
+    jobs = [(rocket, site, s, dt, descent_dt, airbrakes) for s in [nominal_in, *samples]]
     workers = workers or min(8, os.cpu_count() or 1)
     results: list[Sample] = []
     total = len(jobs)
@@ -402,9 +421,7 @@ def monte_carlo(
     return Dispersion(nominal=results[0], samples=tuple(results[1:]), scatter=scatter, seed=seed)
 
 
-def _map(
-    jobs: Sequence[tuple[Rocket, LaunchSite, Sample, float, float]], workers: int
-) -> Iterator[Sample]:
+def _map(jobs: Sequence[_Job], workers: int) -> Iterator[Sample]:
     if workers <= 1 or len(jobs) <= 2:
         yield from map(_fly, jobs)
         return

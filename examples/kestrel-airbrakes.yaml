@@ -1,0 +1,159 @@
+# Kestrel AB: Kestrel with an active airbrake module, aiming for an exact apogee.
+#
+# Same airframe, motor and recovery as rocket.yaml, plus a 120 mm airbrake bay
+# between the avionics bay and the booster. Three servo-driven panels open
+# into the airflow after burnout; the flight computer reads a noisy barometer
+# and accelerometer, estimates its state with a Kalman filter, predicts where
+# it will top out and sets the panels to land on `target_apogee`.
+#
+#   apogee simulate examples/kestrel-airbrakes.yaml
+#   apogee airbrakes examples/kestrel-airbrakes.yaml     # Monte Carlo study
+#
+# Lengths and masses take units (mm, cm, m, in, ft / g, kg, oz, lb); bare
+# numbers are SI. Parts are listed nose to tail. Fins and internal parts go
+# in a body tube's `contents`, positioned from that tube's front end
+# (`position`) or its aft end (`aft_offset`). Add `mass:` to any part you
+# have weighed to override the value computed from its material.
+
+name: Kestrel AB
+description: Kestrel with active airbrakes, flying to a 4,400 m target apogee
+finish: smooth_paint          # polished, smooth_paint, regular_paint, unfinished, rough
+
+flight_computer:
+  target_apogee: 4400m        # height above the pad to stop at
+  rate: 50Hz                  # sensor sampling and Kalman filter rate
+  control_rate: 10Hz          # how often the airbrake setting is re-planned
+  barometer_noise: 1.5m       # one standard deviation
+  accelerometer_noise: 0.3    # m/s², one standard deviation
+  lockout: 1.0s               # wait after burnout before opening the panels
+
+motor:
+  file: motors/Cesaroni_M1670.eng
+  overhang: 15mm              # motor retainer at the tail
+
+components:
+  - nose_cone:
+      shape: von_karman
+      length: 510mm           # 5:1
+      diameter: 102mm
+      thickness: 2.5mm
+      material: fiberglass
+      mass: 880g              # weighed, includes the shoulder and tip
+
+  - body_tube:
+      name: Payload bay
+      length: 760mm
+      thickness: 1.6mm        # diameter carries on from the nose cone
+      material: fiberglass
+      contents:
+        - parachute:
+            name: Main parachute
+            diameter: 1.8m
+            cd: 1.6
+            mass: 450g
+            packed_length: 180mm
+            position: 40mm
+            deploy: 300m      # opens on the way down at 300 m above the pad
+        - mass:
+            name: Main shock cord
+            mass: 220g
+            length: 120mm
+            diameter: 80mm
+            position: 240mm
+        - bulkhead:
+            thickness: 6mm
+            material: plywood
+            aft_offset: 0mm
+
+  - body_tube:
+      name: Avionics bay
+      length: 150mm
+      thickness: 1.6mm
+      material: fiberglass
+      contents:
+        - mass:
+            name: Flight computer and batteries
+            mass: 650g
+            length: 130mm
+            diameter: 60mm
+            position: 10mm
+
+  - body_tube:
+      name: Airbrake bay
+      length: 120mm
+      thickness: 1.6mm
+      material: fiberglass
+      contents:
+        - airbrakes:
+            panels: 3
+            panel_width: 60mm
+            panel_height: 35mm      # how far each panel reaches into the flow
+            cd: 1.2
+            travel_time: 0.4s       # stowed to fully out
+            max_mach: 0.8           # never opened faster than this
+            length: 100mm
+            mass: 420g              # servo, linkage, panels and frame
+            position: 10mm
+
+  - body_tube:
+      name: Booster
+      length: 1100mm
+      thickness: 1.6mm
+      material: fiberglass
+      contents:
+        - bulkhead:
+            thickness: 6mm
+            material: plywood
+        - parachute:
+            name: Drogue parachute
+            diameter: 600mm
+            cd: 1.5
+            mass: 120g
+            packed_length: 90mm
+            position: 30mm
+            deploy: apogee
+        - mass:
+            name: Drogue shock cord
+            mass: 180g
+            length: 100mm
+            diameter: 70mm
+            position: 130mm
+        - inner_tube:
+            name: Motor mount
+            length: 800mm
+            diameter: 79.5mm
+            thickness: 1.6mm
+            material: fiberglass
+            motor_mount: true   # flush with the tail unless positioned
+        - ring:
+            name: Forward centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            position: 300mm
+        - ring:
+            name: Mid centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            aft_offset: 320mm
+        - ring:
+            name: Aft centering ring
+            thickness: 6mm
+            inner_diameter: 79.5mm
+            material: plywood
+            aft_offset: 5mm
+        - mass:
+            name: Motor retainer and rail buttons
+            mass: 260g
+            length: 40mm
+            diameter: 90mm
+            aft_offset: 0mm
+        - fins:
+            count: 3
+            root_chord: 300mm
+            tip_chord: 100mm
+            span: 120mm
+            sweep: 180mm
+            thickness: 3.2mm
+            material: fiberglass

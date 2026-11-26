@@ -48,6 +48,7 @@ from apogee.environment import LaunchSite, Wind
 from apogee.flight import Flight, FlightError, simulate
 from apogee.montecarlo import Dispersion, Scatter, monte_carlo
 from apogee.motor import Motor, MotorFileError, load_motor
+from apogee.playback import write_playback
 from apogee.rocket import Rocket, RocketFileError, load_rocket
 
 _UNIT_TO_METRES = {"m": 1.0, "km": 1000.0, "ft": 0.3048}
@@ -452,6 +453,10 @@ def _cmd_aero(args: argparse.Namespace, out: TextIO) -> int:
 _COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 
+#: Where the browser flight viewer is published.
+VIEWER_URL = "https://haneet10.github.io/Apogee/"
+
+
 def compass(bearing: float) -> str:
     """Nearest of the eight compass points, e.g. ``compass(260) == "W"``."""
     return _COMPASS[round(bearing / 45.0) % 8]
@@ -571,6 +576,12 @@ def _cmd_simulate(args: argparse.Namespace, out: TextIO) -> int:
         except OSError as exc:
             return _error(f"cannot write {path}: {exc.strerror or exc}")
         out.write(f"\nWrote {n:,} time steps to {path}\n")
+    if args.json:
+        try:
+            n = write_playback(flight, args.json)
+        except OSError as exc:
+            return _error(f"cannot write {args.json}: {exc.strerror or exc}")
+        out.write(f"Wrote a {n:,}-sample playback to {args.json}; open it at {VIEWER_URL}\n")
     for w in [*rocket.warnings, *flight.warnings]:
         out.write(f"\nwarning: {w}\n")
     return 0
@@ -872,6 +883,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         metavar="CSV",
         help="where to write the time steps (default: <rocket>-flight.csv here; 'none' to skip)",
+    )
+    sim.add_argument(
+        "--json",
+        metavar="FILE",
+        help="also write a playback file for the browser viewer (" + VIEWER_URL + ")",
     )
     sim.set_defaults(handler=_cmd_simulate)
 

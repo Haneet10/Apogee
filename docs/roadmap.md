@@ -10,8 +10,10 @@ Apogee is built one part per day. Each day is a complete, tested step that works
 - [x] **Day 4 — 6-DOF dynamics.** State vector (position, velocity, quaternion, body rates), forces and moments in body and world frames, launch rail constraint, wind. RK4 integrator. Tests: drag-free flight matches closed form, quaternion stays normalised, torque-free spin conserves angular momentum.
 - [x] **Day 5 — Full flight.** Event detection (rail exit, burnout, apogee, deployment, landing), parachute descent, flight summary. CLI: `apogee simulate examples/rocket.yaml` writes a CSV and prints apogee, max speed, max g, rail-exit speed, landing distance. Carried from Day 3: wave drag of smooth noses (ogive, von Kármán, Haack) above Mach 0.8, since Kestrel flies transonic.
 - [x] **Day 6 — Validation.** Reference flight compared with an independent simulator (apogee, time to apogee, max velocity), error table and comparison plots in `docs/validation.md`. Monte Carlo landing dispersion (wind, mass, thrust scatter). OpenRocket could not run in the build environment, so the reference is RocketPy 1.13 on the same inputs; `apogee dispersion` and `docs/dispersion.md` cover the Monte Carlo.
-- [ ] **Day 7 — Browser viewer and polish.** Static page that plays back a flight (trajectory, altitude/velocity plots, attitude), deployed to GitHub Pages. README screenshots, usage guide, and a row in the projects index.
+- [x] **Day 7 — Browser viewer and polish.** Static page that plays back a flight (trajectory, altitude/velocity plots, attitude), deployed to GitHub Pages. README screenshots, usage guide, and a row in the projects index. `apogee simulate --json` writes the playback file; the viewer lives in `viewer/` and deploys from the Viewer workflow. The projects-index row moved to the backlog (that repository is edited by hand).
 
 ## Backlog
+
+- [ ] Add Apogee to the projects index in Haneet10/Public, linking the repo and the live viewer.
 
 - [ ] OpenRocket cross-check: fly Kestrel in OpenRocket 23.09 (calm and 4 m/s crosswind) to settle the 146 m weathercocking gap between Apogee and RocketPy described in `docs/validation.md`.

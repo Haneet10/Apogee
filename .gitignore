@@ -9,3 +9,6 @@ out/
 *.csv
 !examples/**/*.csv
 !tests/data/**/*.csv
+
+# built by the Pages workflow (apogee simulate --json)
+viewer/flights/

@@ -2,9 +2,12 @@
 
 **A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against RocketPy, an independent peer-reviewed simulator: the two agree on apogee to 0.03 %.
 
-![Landing points of 300 simulated Kestrel flights scattered around a 95 % landing ellipse, 2 km east of the pad](docs/img/dispersion.png)
+**[Watch Kestrel fly in the browser →](https://haneet10.github.io/Apogee/)**
 
-> **Status:** in active development (week of Nov 19, 2026). Full flights (`apogee simulate`), Monte Carlo landing zones (`apogee dispersion`) and the RocketPy validation work today; a browser flight viewer lands next. See [`docs/roadmap.md`](docs/roadmap.md).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/viewer-dark.png">
+  <img alt="The Apogee flight viewer nine seconds into Kestrel's flight: a 3D trajectory from pad to apogee and landing, live telemetry, and the rocket's outline tilted 4.8 degrees into the wind" src="docs/img/viewer-light.png">
+</picture>
 
 ## Quick start
 
@@ -37,7 +40,17 @@ Flight time       317.3 s
 Wrote 8,543 time steps to kestrel-flight.csv
 ```
 
-Every time step goes to the CSV for plotting. Set the launch with `--rail`, `--tilt`, `--heading`, `--wind`, `--wind-from` and `--elevation`; plain-language warnings flag a slow rail exit, a hard landing or a missing parachute. Full guide: [`docs/flight.md`](docs/flight.md).
+Every time step goes to the CSV for plotting. Add `--json flight.json` and open the file in the [flight viewer](https://haneet10.github.io/Apogee/) to watch it play back. Set the launch with `--rail`, `--tilt`, `--heading`, `--wind`, `--wind-from` and `--elevation`; plain-language warnings flag a slow rail exit, a hard landing or a missing parachute. Full guide: [`docs/flight.md`](docs/flight.md).
+
+### Watch it fly
+
+```bash
+apogee simulate my_rocket.yaml --json flight.json
+```
+
+Open [haneet10.github.io/Apogee](https://haneet10.github.io/Apogee/), choose **Open flight** (or drop the file on the page) and the flight plays back: an orbitable 3D trajectory coloured by phase, altitude, speed and acceleration against time, live telemetry, the rocket's own outline tilting with its attitude (CG and CP marked), and every event one click away. Play at 1× to 64×, scrub the timeline or the plots, and use the keyboard (`Space`, `←` `→`, `,` `.`). The file is read in your browser and never uploaded. The page opens on Kestrel, flown by the current code on every push. Details and the file format: [`docs/viewer.md`](docs/viewer.md).
+
+![Landing points of 300 simulated Kestrel flights scattered around a 95 % landing ellipse, 2 km east of the pad](docs/img/dispersion.png)
 
 ### The rocket
 
@@ -148,6 +161,9 @@ flight.apogee                              # 4,841 m above the pad
 flight.event("Main parachute opens").time  # 261.4 s
 flight.landing_distance                    # 2,046 m downwind
 flight.trajectory.position                 # every step, east-north-up [m]
+
+from apogee.playback import write_playback
+write_playback(flight, "flight.json")      # for the browser viewer
 ```
 
 Thrust, gravity, drag, the air's sideways push at the centre of pressure, aerodynamic and jet damping, the launch rail and a wind that strengthens with height all act on the rocket at every step. The lower-level 6-DOF solver (`Dynamics`, `integrate`) is documented in [`docs/dynamics.md`](docs/dynamics.md).
@@ -186,10 +202,7 @@ air.density                # 1.0581 kg/m³
 - Report apogee, max speed and acceleration, rail-exit speed, descent rates and the landing point, and write every step to CSV
 - Scatter the wind, rail, build and motor over hundreds of flights and map the 95 % landing zone
 - Agree with an independent simulator (RocketPy) to 0.1 % on the ascent, with the remaining differences explained
-
-Coming this week:
-
-- Play the flight back in the browser
+- Play any flight back in the browser: 3D trajectory, plots, attitude and events on one clock
 
 ## For engineers
 
@@ -199,6 +212,7 @@ Coming this week:
 - Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
 - Aerodynamics: Barrowman normal-force slopes and CP (nose CP from volume, fins with body interference and Diederich compressibility, Bonney/Ackeret above Mach 1.5), Galejs body lift at angle of attack, Niskanen/Hoerner drag build-up (roughness-limited skin friction, fin edges, base drag reduced by the motor plume) against Mach and Reynolds number, supersonic slender-body wave drag for smooth noses, and pitch damping. Fin and whole-rocket CP match Barrowman's equations worked by hand to 10⁻⁶ nose CPs match six closed forms, and nose wave drag matches von Kármán's `(d/L)²` to 10⁻⁴. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md)
 - Validation against RocketPy 1.13 (independent 6-DOF code, LSODA integrator) on the same inputs: apogee, time to apogee, max speed, burnout altitude and deployment time within 0.1 %, static margin identical to three decimals, in calm air and in a crosswind. The one real gap, 146 m more crosswind drift over 2.7 km, is traced to the weathercocking transient off the rail (Apogee includes body lift at angle of attack; its restoring moment matches the hand calculation). Re-checked on every commit. Details: [`docs/validation.md`](docs/validation.md)
+- Flight viewer: dependency-free ES modules on a 2D canvas (orthographic orbit camera, no WebGL or chart library), fed by a versioned JSON playback format. Samples are thinned by phase (0.02 s under thrust, 0.1 s coasting, 0.5 s under canopy) with the event steps always kept, so 8,500 RK4 steps become about 1,000 and linear playback stays within 0.5 m of the solution on the way up (tested). Respects `prefers-reduced-motion` and the system colour scheme. Details: [`docs/viewer.md`](docs/viewer.md)
 - Monte Carlo dispersion: seeded, parallel, reproducible for any worker count; landing ellipse from the covariance's eigenvectors and the χ² quantile, tested on known rotated Gaussians (axes within 1 %, coverage within 0.6 %). Method: [`docs/dispersion.md`](docs/dispersion.md)
 
 ## Development

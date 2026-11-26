@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apogee flight viewer</title>
+  <meta name="description" content="Play back a 6-DOF rocket flight simulated by Apogee: 3D trajectory, altitude, speed and acceleration, attitude and events. Open your own flight file from apogee simulate --json.">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:title" content="Apogee flight viewer">
+  <meta property="og:description" content="Play back a simulated rocket flight from the launch rail to touchdown.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3c4 4 5 9 5 14v6h-10v-6c0-5 1-10 5-14z' fill='%23d9481c'/%3E%3Cpath d='M11 19l-4 6h4zM21 19l4 6h-4z' fill='%2315171b'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to the flight</a>
+
+  <header class="masthead">
+    <div class="brand">
+      <a href="https://github.com/Haneet10/Apogee" class="wordmark">Apogee</a>
+      <span class="brand-sub">Flight viewer</span>
+    </div>
+    <div class="flight-id">
+      <h1 id="rocket-name">Loading flight…</h1>
+      <p id="flight-meta">&nbsp;</p>
+    </div>
+    <div class="actions">
+      <button type="button" id="open" class="btn">
+        <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <span>Open flight</span>
+      </button>
+      <input type="file" id="file" accept=".json,application/json" hidden>
+      <button type="button" id="theme" class="btn icon" aria-label="Switch light or dark theme" title="Switch theme">
+        <svg aria-hidden="true" viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="error" class="error" role="alert" hidden>
+    <p></p>
+    <button type="button" id="error-close" class="btn">Dismiss</button>
+  </div>
+
+  <dl id="summary" class="summary" aria-label="Flight summary"></dl>
+
+  <main id="stage" class="stage">
+    <figure class="view">
+      <figcaption class="panel-head">
+        <span class="label">Trajectory</span>
+        <ul id="legend" class="legend" aria-label="Flight phases"></ul>
+        <button type="button" id="reset-view" class="btn small" title="Reset the view (R)">Reset view</button>
+      </figcaption>
+      <canvas id="scene" tabindex="0" role="img" aria-label="3D trajectory"></canvas>
+      <p class="hint">Drag to orbit · scroll or pinch to zoom · double-click to reset</p>
+    </figure>
+
+    <aside class="telemetry" aria-label="Telemetry">
+      <div class="panel-head">
+        <span class="label">Telemetry</span>
+        <span id="r-phase" class="phase-tag"></span>
+      </div>
+      <dl class="readouts">
+        <div><dt>Altitude</dt><dd><span id="r-alt" class="num">0</span><span class="unit">m</span></dd></div>
+        <div><dt>Speed</dt><dd><span id="r-speed" class="num">0</span><span class="unit">m/s</span></dd></div>
+        <div><dt>Mach</dt><dd><span id="r-mach" class="num">0.00</span></dd></div>
+        <div><dt>Acceleration</dt><dd><span id="r-accel" class="num">0.0</span><span class="unit">g</span></dd></div>
+        <div><dt>Downrange</dt><dd><span id="r-range" class="num">0</span><span class="unit">m</span></dd></div>
+      </dl>
+      <div class="attitude">
+        <div class="panel-head sub"><span class="label">Attitude</span></div>
+        <canvas id="attitude" aria-hidden="true"></canvas>
+        <p id="attitude-caption" class="caption"></p>
+      </div>
+    </aside>
+
+    <section class="plots" aria-label="Flight data against time">
+      <div class="panel-head">
+        <span class="label">Flight data</span>
+        <div id="range" class="segmented" role="group" aria-label="Time range">
+          <button type="button" data-mode="auto" aria-pressed="true" title="Ascent, then the whole flight after apogee">Auto</button>
+          <button type="button" data-mode="ascent" aria-pressed="false">Ascent</button>
+          <button type="button" data-mode="whole" aria-pressed="false">Whole flight</button>
+        </div>
+      </div>
+      <div id="charts" class="charts"></div>
+    </section>
+
+    <section class="events-panel" aria-labelledby="events-title">
+      <div class="panel-head"><span class="label" id="events-title">Events</span><span class="hint-inline">select to jump</span></div>
+      <ol id="events" class="events"></ol>
+      <ul id="warnings" class="warnings" hidden></ul>
+    </section>
+  </main>
+
+  <div class="transport" role="group" aria-label="Playback">
+    <button type="button" id="play" class="play" aria-pressed="false" aria-label="Play">
+      <svg class="i-play" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+      <svg class="i-pause" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor"/></svg>
+      <span class="play-label">Play</span>
+    </button>
+    <div class="clock"><span id="t-plus">T+0.0 s</span><span class="of">of <span id="duration">–</span></span></div>
+    <div id="scrub" class="scrub" role="slider" tabindex="0" aria-label="Flight time" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+      <div class="track">
+        <div id="track-phases" class="track-phases"></div>
+        <div id="track-fill" class="track-fill"></div>
+        <div id="track-events" class="track-events"></div>
+      </div>
+      <div id="thumb" class="thumb"></div>
+    </div>
+    <div id="speeds" class="segmented speeds" role="group" aria-label="Playback speed">
+      <button type="button" data-speed="1" aria-pressed="true" title="Real time (1)">1×</button>
+      <button type="button" data-speed="4" aria-pressed="false" title="4× (2)">4×</button>
+      <button type="button" data-speed="16" aria-pressed="false" title="16× (3)">16×</button>
+      <button type="button" data-speed="64" aria-pressed="false" title="64× (4)">64×</button>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div class="foot-col">
+      <h2>Fly your own rocket</h2>
+      <pre><code>pip install git+https://github.com/Haneet10/Apogee
+apogee simulate my_rocket.yaml --json flight.json</code></pre>
+      <p>Then choose <strong>Open flight</strong> or drop the file on this page. <span id="source-note">The flight above is Kestrel, the example rocket, in a 4 m/s west wind.</span> Files are read in your browser and never uploaded.</p>
+    </div>
+    <div class="foot-col">
+      <h2>Keyboard</h2>
+      <dl class="keys">
+        <div><dt><kbd>Space</kbd></dt><dd>Play or pause</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 1 s (Shift: 10 s)</dd></div>
+        <div><dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Previous or next event</dd></div>
+        <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Playback speed</dd></div>
+        <div><dt><kbd>R</kbd></dt><dd>Reset the 3D view</dd></div>
+      </dl>
+    </div>
+    <div class="foot-col">
+      <h2>About</h2>
+      <p>Apogee is a 6-DOF rocket flight simulator in Python, validated against RocketPy to 0.03 % on apogee. <a href="https://github.com/Haneet10/Apogee">Source and method on GitHub</a>.</p>
+    </div>
+  </footer>
+
+  <div class="drop-overlay" aria-hidden="true"><p>Drop an Apogee flight file to play it</p></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

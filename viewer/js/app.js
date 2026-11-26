@@ -69,7 +69,39 @@ const app = {
 if (storedTheme()) document.documentElement.dataset.theme = storedTheme();
 palette.refresh();
 
-const scene = new Scene($("#scene"), palette, { reducedMotion });
+const scene = await makeScene();
+
+/** The cinematic WebGL view where the browser can draw it, the line drawing otherwise. */
+async function makeScene() {
+  let canvas = $("#scene");
+  try {
+    const { Cinema, webglAvailable } = await import("./cinema.js");
+    if (!webglAvailable()) throw new Error("WebGL is not available");
+    const view = new Cinema(canvas, palette, {
+      reducedMotion,
+      labels: $("#scene-labels"),
+      onModeChange: (mode) => {
+        for (const b of document.querySelectorAll("#camera button")) {
+          b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+        }
+        wake();
+      },
+    });
+    $("#camera").hidden = false;
+    document.body.classList.add("cinema");
+    window.apogeeView = view; // handy from the console
+    return view;
+  } catch (err) {
+    console.warn("3D view unavailable, using the line drawing:", err);
+    // a canvas that already holds a WebGL context cannot give a 2D one
+    const fresh = canvas.cloneNode(false);
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+    $("#camera").hidden = true;
+    document.body.classList.remove("cinema");
+    return new Scene(canvas, palette, { reducedMotion });
+  }
+}
 const attitude = new Attitude($("#attitude"), palette, { reducedMotion });
 const charts = new Charts($("#charts"), palette, {
   reducedMotion,
@@ -93,11 +125,25 @@ function loadFlight(doc, { autoplay }) {
   wake();
 }
 
-async function loadDefault() {
+const EXAMPLE_NOTES = {
+  "flights/kestrel-ab.json":
+    "The flight above is Kestrel AB, the example rocket with airbrakes, flying itself to a 4,400 m target in a 4 m/s west wind.",
+  "flights/kestrel.json": "The flight above is Kestrel, the example rocket, flying passively in a 4 m/s west wind.",
+};
+
+async function loadExample(file) {
+  for (const b of document.querySelectorAll("#examples button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.file === file));
+  }
   try {
-    const res = await fetch("flights/kestrel.json", { cache: "no-cache" });
+    let res = await fetch(file, { cache: "no-cache" });
+    if (!res.ok && file !== "flights/kestrel.json") {
+      file = "flights/kestrel.json";
+      res = await fetch(file, { cache: "no-cache" });
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     loadFlight(await res.json(), { autoplay: true });
+    $("#source-note").textContent = EXAMPLE_NOTES[file] || "";
   } catch (err) {
     console.error(err);
     showError(
@@ -120,6 +166,7 @@ async function loadFile(file) {
       );
     }
     loadFlight(doc, { autoplay: true });
+    for (const b of document.querySelectorAll("#examples button")) b.setAttribute("aria-pressed", "false");
     $("#source-note").textContent = `Showing ${file.name}, read in your browser. Nothing was uploaded.`;
   } catch (err) {
     showError(err instanceof FlightFileError ? err.message : `Could not read ${file.name}: ${err.message}`);
@@ -147,10 +194,21 @@ function renderStatic(f) {
   const wind = site.wind.speed > 0 ? `wind ${fmt(site.wind.speed, 1)} m/s from ${compass(site.wind.direction)}` : "calm";
   $("#flight-meta").textContent = `${motor}  ·  ${rail}  ·  ${wind}`;
 
+  const ab = f.airbrakes;
+  const signed = (x, d) => `${x >= 0 ? "+" : "−"}${fmt(Math.abs(x), d)}`;
   const stats = [
     ["Apogee", fmt(s.apogee, 0), "m", `at ${fmt(s.time_to_apogee, 1)} s`],
     ["Max speed", fmt(s.max_speed, 0), "m/s", `Mach ${fmt(s.max_mach, 2)}`],
-    ["Max acceleration", fmt(s.max_acceleration_g, 1), "g", `at ${fmt(s.max_acceleration_time, 2)} s`],
+    ab
+      ? [
+          "Target miss",
+          signed(ab.error, 1),
+          "m",
+          ab.passive_apogee != null
+            ? `${signed(ab.passive_apogee - ab.target, 0)} m if flown passively`
+            : `target ${fmt(ab.target, 0)} m`,
+        ]
+      : ["Max acceleration", fmt(s.max_acceleration_g, 1), "g", `at ${fmt(s.max_acceleration_time, 2)} s`],
     ["Off the rail", fmt(s.rail_exit_speed, 1), "m/s", `${fmt(r.outline.margin_liftoff, 2)} cal margin`],
     [
       "Landing",
@@ -207,6 +265,12 @@ function renderStatic(f) {
   const names = { boost: "Powered", coast: "Coast", drogue: "Drogue", main: "Main" };
   $("#legend").innerHTML = kinds.map((k) => `<li><span class="swatch ${k}"></span>${names[k]}</li>`).join("");
 
+  $("#computer").hidden = !ab;
+  $("#hud-brakes").hidden = !ab;
+  if (ab) {
+    $("#r-target").textContent = fmt(ab.target, 0);
+    $("#hud-target").textContent = `${fmt(ab.target, 0)} m`;
+  }
   $("#warnings").innerHTML = f.warnings.map((w) => `<li>${w}</li>`).join("");
   $("#warnings").hidden = !f.warnings.length;
   $("#scene").setAttribute(
@@ -270,6 +334,18 @@ function updateText() {
   $("#r-phase").textContent = phaseLabel(st.phase);
   $("#r-phase").dataset.kind = st.kind;
   $("#attitude-caption").textContent = attitude.caption(st);
+  $("#hud-t").textContent = missionTime(app.time);
+  $("#hud-phase").textContent = phaseLabel(st.phase);
+  if (f.airbrakes) {
+    const fc = f.computerAt(app.time);
+    const pct = fmt(100 * st.brake, 0);
+    const pred = fc && Number.isFinite(fc.predicted) && app.time <= f.apogeeTime ? fmt(fc.predicted, 0) : "–";
+    $("#r-brake").textContent = pct;
+    $("#r-pred").textContent = pred;
+    $("#r-drag").textContent = fc ? fmt(fc.drag, 2) : "1.00";
+    $("#hud-brake-pct").textContent = `${pct} %`;
+    $("#hud-pred").textContent = pred === "–" ? pred : `${pred} m`;
+  }
   charts.updateValues();
 
   const scrub = $("#scrub");
@@ -285,6 +361,13 @@ function updateText() {
     b.classList.toggle("past", f.events[k].time <= app.time + 1e-3);
     b.classList.toggle("next", k === next);
   }
+}
+
+function updateGauge() {
+  const f = app.flight;
+  if (!f.airbrakes) return;
+  // per frame, eased by the panel motion itself: a transform, so it never re-lays out
+  $("#hud-brake-bar").style.transform = `scaleX(${f.sample(app.time).brake.toFixed(4)})`;
 }
 
 function updateThumb() {
@@ -318,6 +401,7 @@ function loop(now) {
   charts.draw();
   if (f) {
     updateThumb();
+    updateGauge();
     app.textClock += dt;
     if (app.textClock >= TEXT_INTERVAL) {
       app.textClock = 0;
@@ -346,6 +430,18 @@ for (const b of document.querySelectorAll("#range button")) {
   });
 }
 $("#reset-view").addEventListener("click", () => { scene.resetView(); wake(); });
+for (const b of document.querySelectorAll("#camera button")) {
+  b.addEventListener("click", () => { scene.setMode?.(b.dataset.mode); wake(); });
+}
+for (const b of document.querySelectorAll("#examples button")) {
+  b.addEventListener("click", () => loadExample(b.dataset.file));
+}
+function nextCamera() {
+  if (!scene.setMode) return;
+  const modes = ["auto", "chase", "ground", "orbit"];
+  scene.setMode(modes[(modes.indexOf(scene.mode) + 1) % modes.length]);
+  wake();
+}
 $("#theme").addEventListener("click", () => {
   const next = currentTheme() === "dark" ? "light" : "dark";
   try { localStorage.setItem("apogee-theme", next); } catch { /* private mode: still switch */ }
@@ -422,6 +518,7 @@ document.addEventListener("keydown", (e) => {
     3: () => setSpeed(SPEEDS[2]),
     4: () => setSpeed(SPEEDS[3]),
     r: () => { scene.resetView(); wake(); },
+    c: () => nextCamera(),
   };
   const action = actions[e.key];
   if (!action) return;
@@ -431,4 +528,4 @@ document.addEventListener("keydown", (e) => {
 });
 
 setSpeed(1);
-loadDefault();
+loadExample("flights/kestrel-ab.json");

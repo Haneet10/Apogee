@@ -25,11 +25,12 @@ jobs:
           cache: pip
       - name: Install
         run: pip install .
-      - name: Fly the example flight
+      - name: Fly the example flights
         # The page always plays the flight the current solver produces.
         run: |
           mkdir -p viewer/flights
           apogee simulate --wind 4 -o none --json viewer/flights/kestrel.json
+          apogee simulate examples/kestrel-airbrakes.yaml --wind 4 -o none --json viewer/flights/kestrel-ab.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

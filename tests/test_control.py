@@ -35,8 +35,8 @@ def flights(ab):
 def test_example_has_airbrakes_and_a_flight_computer(ab):
     brakes = ab.airbrakes
     assert brakes is not None
-    assert brakes.panels == 3
-    assert brakes.max_area == pytest.approx(3 * 0.060 * 0.035)
+    assert brakes.panels == 4
+    assert brakes.max_area == pytest.approx(4 * 0.060 * 0.045)
     assert brakes.travel_time == pytest.approx(0.4)
     assert ab.target_apogee == TARGET
     assert ab.flight_computer.rate == 50.0
@@ -46,8 +46,8 @@ def test_example_has_airbrakes_and_a_flight_computer(ab):
 def test_airbrakes_add_their_mass(ab):
     kestrel = load_rocket(example_path("rocket.yaml"))
     extra = ab.dry_mass_properties().mass - kestrel.dry_mass_properties().mass
-    # The 420 g module plus a 120 mm fiberglass bay.
-    assert 0.42 < extra < 0.60
+    # The 480 g module plus a 120 mm fiberglass bay.
+    assert 0.48 < extra < 0.66
 
 
 def test_with_target_overrides_and_stows(ab):

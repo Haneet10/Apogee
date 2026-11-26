@@ -78,7 +78,7 @@ def test_playback_carries_the_flight_computer(tmp_path):
     assert len(doc["series"]["airbrakes"]) == n
     assert max(doc["series"]["airbrakes"]) > 0.0
     outline = doc["rocket"]["outline"]["airbrakes"]
-    assert outline["panels"] == 3
+    assert outline["panels"] == 4
     log = doc["airbrakes"]["log"]
     assert len(log["t"]) == len(log["predicted_apogee"]) == len(log["deployment"])
     assert log["predicted_apogee"][0] is None  # nothing predicted on the pad

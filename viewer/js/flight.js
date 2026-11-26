@@ -13,6 +13,8 @@ const SERIES = ["t", "east", "north", "up", "speed", "mach", "acceleration_g", "
 /** Short labels for the plots and the timeline. */
 export function shortEventName(name) {
   if (name === "Rail exit") return "Rail exit";
+  if (name === "Airbrakes open") return "Brakes out";
+  if (name === "Airbrakes stowed") return "Brakes in";
   const chute = name.match(/^(.*) parachute opens$/);
   if (chute) return chute[1];
   return name.replace(/ opens$/, "");
@@ -62,6 +64,35 @@ export class Flight {
     this.bounds = { minE, maxE, minN, maxN, maxU };
     this.maxSpeed = Math.max(...this.speed);
     this.maxAccel = Math.max(...this.acceleration_g);
+
+    // Airbrake flights carry the panel extension and the flight computer's log.
+    this.airbrakes = doc.airbrakes && Array.isArray(s.airbrakes) && s.airbrakes.length === this.n
+      ? doc.airbrakes
+      : null;
+    if (this.airbrakes) {
+      this.brake = Float64Array.from(s.airbrakes);
+      this.brake_pct = this.brake.map((v) => 100 * v);
+      const log = this.airbrakes.log;
+      this.fc = {
+        t: Float64Array.from(log.t),
+        predicted: log.predicted_apogee.map((v) => (v == null ? NaN : v)),
+        command: Float64Array.from(log.command),
+        drag: Float64Array.from(log.drag_factor),
+      };
+    }
+  }
+
+  /** The flight computer's latest log row at or before ``time`` (or null). */
+  computerAt(time) {
+    const fc = this.fc;
+    if (!fc || !fc.t.length || time < fc.t[0]) return null;
+    let lo = 0, hi = fc.t.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (fc.t[mid] <= time) lo = mid; else hi = mid;
+    }
+    if (fc.t[hi] <= time) lo = hi;
+    return { predicted: fc.predicted[lo], command: fc.command[lo], drag: fc.drag[lo] };
   }
 
   /** Index i with t[i] <= time < t[i+1], clamped to the series. */
@@ -110,6 +141,7 @@ export class Flight {
       axis,
       phase,
       kind: phaseKind(phase),
+      brake: this.brake ? lerp(this.brake) : 0,
     };
   }
 }

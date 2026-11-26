@@ -2,7 +2,9 @@
 
 **A rocket flight simulator you can read.** Give it a rocket (nose cone, body tube, fins, motor) and it predicts the whole flight: how high it goes, how fast, how stable it is, and where it lands. Results are checked against analytic solutions and against RocketPy, an independent peer-reviewed simulator: the two agree on apogee to 0.03 %.
 
-**[Watch Kestrel fly in the browser →](https://haneet10.github.io/Apogee/)**
+Give the rocket **airbrakes** and Apogee flies a simulated flight computer too: noisy barometer and IMU, a Kalman filter, in-flight drag learning and a predictive controller that opens the panels just enough to stop on a target apogee. Over 100 scattered flights it lands every flight that can reach the target within 2.4 m of it, against a ±213 m spread flown passively.
+
+**[Watch Kestrel fly itself to 4,400 m in 3D →](https://haneet10.github.io/Apogee/)**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/viewer-dark.png">
@@ -48,9 +50,43 @@ Every time step goes to the CSV for plotting. Add `--json flight.json` and open 
 apogee simulate my_rocket.yaml --json flight.json
 ```
 
-Open [haneet10.github.io/Apogee](https://haneet10.github.io/Apogee/), choose **Open flight** (or drop the file on the page) and the flight plays back: an orbitable 3D trajectory coloured by phase, altitude, speed and acceleration against time, live telemetry, the rocket's own outline tilting with its attitude (CG and CP marked), and every event one click away. Play at 1× to 64×, scrub the timeline or the plots, and use the keyboard (`Space`, `←` `→`, `,` `.`). The file is read in your browser and never uploaded. The page opens on Kestrel, flown by the current code on every push. Details and the file format: [`docs/viewer.md`](docs/viewer.md).
+Open [haneet10.github.io/Apogee](https://haneet10.github.io/Apogee/), choose **Open flight** (or drop the file on the page) and the flight plays back in 3D: the rocket modelled from its own design file (nose profile, body sections, fins, airbrake panels), its exhaust plume and smoke trail drifting in the wind, the drogue and main canopies opening, all over terrain under a day or dusk sky. A directed camera cuts from a ground tracking camera at liftoff to a chase camera for the coast; **Chase**, **Ground** and **Orbit** pin one. Altitude, speed, acceleration and airbrake extension plot against time, with live telemetry, the flight computer's predicted apogee, the rocket's outline tilting with its attitude (CG and CP marked), and every event one click away. Play at 1× to 64×, scrub the timeline or the plots, and use the keyboard (`Space`, `←` `→`, `,` `.`, `C`). The file is read in your browser and never uploaded. The page opens on Kestrel AB, flown by the current code on every push. Details and the file format: [`docs/viewer.md`](docs/viewer.md).
 
 ![Landing points of 300 simulated Kestrel flights scattered around a 95 % landing ellipse, 2 km east of the pad](docs/img/dispersion.png)
+
+### Fly to an exact apogee
+
+```bash
+apogee simulate examples/kestrel-airbrakes.yaml --wind 4
+```
+
+Kestrel AB is Kestrel with a four-panel airbrake bay and a 4,400 m target. After the usual event table it reports how the flight computer did:
+
+```
+Target apogee      4,400 m
+Reached            4,401.9 m (+1.9 m, +0.04 %)
+Without airbrakes  4,703 m (+303 m)
+Airbrakes          opened at 8.2 s, Mach 0.79; 15 % open on average, 18 % at most
+Drag learned       1.062 × the pre-flight drag model
+```
+
+The flight computer never sees the true state. It reads a 1.5 m barometer and a 0.3 m/s² accelerometer at 50 Hz, fuses them in a Kalman filter, learns the rocket's real drag from its deceleration, predicts its own apogee ten times a second and sets the panels (rate-limited, only below Mach 0.8) so the prediction lands on the target. `apogee airbrakes` flies the same scattered flights with and without it:
+
+```
+                      Mean apogee  Mean miss  1σ miss  Worst miss  Within ±15 m
+                              [m]        [m]      [m]         [m]
+────────────────────  ───────────  ─────────  ───────  ──────────  ────────────
+Passive                     4,765     +365.3    212.7       878.2           1 %
+Airbrakes                   4,399       -0.6     10.1        99.5          99 %
+Airbrakes, reachable        4,401       +0.5      0.8         2.4         100 %
+
+The airbrakes cut the 1σ apogee scatter from 213 m to 10.1 m.
+2 of 100 flights could not reach the target even with the airbrakes stowed (they only add drag); the last row leaves them out.
+```
+
+![Left: the predicted apogee converging on the 4,400 m target as the airbrakes open. Right: apogee miss of 100 scattered flights, passive against airbrakes](docs/img/airbrakes.png)
+
+Method, the full model and what it leaves out: [`docs/airbrakes.md`](docs/airbrakes.md).
 
 ### The rocket
 
@@ -202,7 +238,8 @@ air.density                # 1.0581 kg/m³
 - Report apogee, max speed and acceleration, rail-exit speed, descent rates and the landing point, and write every step to CSV
 - Scatter the wind, rail, build and motor over hundreds of flights and map the 95 % landing zone
 - Agree with an independent simulator (RocketPy) to 0.1 % on the ascent, with the remaining differences explained
-- Play any flight back in the browser: 3D trajectory, plots, attitude and events on one clock
+- Fly active airbrakes to a target apogee with a simulated flight computer (noisy sensors, Kalman filter, drag learning, predictive control), and measure how well it does over hundreds of scattered flights
+- Play any flight back in the browser in cinematic 3D: the rocket built from its design, plume, smoke, canopies, terrain, directed cameras, plots and events on one clock
 
 ## For engineers
 
@@ -212,7 +249,8 @@ air.density                # 1.0581 kg/m³
 - Mass model: closed-form hollow cylinders, nose cones integrated as shells of revolution (six profiles, Crowell 1996), trapezoidal fin sets integrated strip by strip, combined with the parallel-axis theorem. Motor propellant burns in proportion to delivered impulse. Every part is checked against a closed-form result, and the example motor's curve integrates to its published 6,026 N·s within 0.006 %. Method and validation: [`docs/rocket.md`](docs/rocket.md)
 - Aerodynamics: Barrowman normal-force slopes and CP (nose CP from volume, fins with body interference and Diederich compressibility, Bonney/Ackeret above Mach 1.5), Galejs body lift at angle of attack, Niskanen/Hoerner drag build-up (roughness-limited skin friction, fin edges, base drag reduced by the motor plume) against Mach and Reynolds number, supersonic slender-body wave drag for smooth noses, and pitch damping. Fin and whole-rocket CP match Barrowman's equations worked by hand to 10⁻⁶ nose CPs match six closed forms, and nose wave drag matches von Kármán's `(d/L)²` to 10⁻⁴. Method and validation: [`docs/aerodynamics.md`](docs/aerodynamics.md)
 - Validation against RocketPy 1.13 (independent 6-DOF code, LSODA integrator) on the same inputs: apogee, time to apogee, max speed, burnout altitude and deployment time within 0.1 %, static margin identical to three decimals, in calm air and in a crosswind. The one real gap, 146 m more crosswind drift over 2.7 km, is traced to the weathercocking transient off the rail (Apogee includes body lift at angle of attack; its restoring moment matches the hand calculation). Re-checked on every commit. Details: [`docs/validation.md`](docs/validation.md)
-- Flight viewer: dependency-free ES modules on a 2D canvas (orthographic orbit camera, no WebGL or chart library), fed by a versioned JSON playback format. Samples are thinned by phase (0.02 s under thrust, 0.1 s coasting, 0.5 s under canopy) with the event steps always kept, so 8,500 RK4 steps become about 1,000 and linear playback stays within 0.5 m of the solution on the way up (tested). Respects `prefers-reduced-motion` and the system colour scheme. Details: [`docs/viewer.md`](docs/viewer.md)
+- Active airbrakes: a flight computer closed around the 6-DOF solver. Gaussian barometer and accelerometer noise, a three-state Kalman filter (white-jerk model, Joseph-form update), burnout detected from the estimate, in-flight drag-ratio learning, a point-mass RK4 apogee predictor checked against the 6-DOF coast to 0.5 %, and a regula falsi solve for the panel setting with a deadband and a low-speed hold. Panel drag `½ρV²·cd·A·δ` with a slew-rate-limited servo, Mach lockout and burnout lockout, all verified by tests. Method and limitations: [`docs/airbrakes.md`](docs/airbrakes.md)
+- Flight viewer: ES modules with three.js (vendored, no build step) for the 3D view and 2D canvases for the plots, falling back to a hand-written orthographic line drawing where WebGL is missing, fed by a versioned JSON playback format. Samples are thinned by phase (0.02 s under thrust, 0.1 s coasting, 0.5 s under canopy) with the event steps always kept, so 8,500 RK4 steps become about 1,000 and linear playback stays within 0.5 m of the solution on the way up (tested). Respects `prefers-reduced-motion` and the system colour scheme. Details: [`docs/viewer.md`](docs/viewer.md)
 - Monte Carlo dispersion: seeded, parallel, reproducible for any worker count; landing ellipse from the covariance's eigenvectors and the χ² quantile, tested on known rotated Gaussians (axes within 1 %, coverage within 0.6 %). Method: [`docs/dispersion.md`](docs/dispersion.md)
 
 ## Development
@@ -224,4 +262,4 @@ pytest            # unit tests and doctests
 ruff check . && mypy
 ```
 
-Python 3.11+, NumPy and PyYAML for the solver, pytest for tests, plain HTML/JS for the viewer.
+Python 3.11+, NumPy and PyYAML for the solver, pytest for tests, plain HTML/JS (plus a vendored three.js) for the viewer.

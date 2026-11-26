@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Apogee flight viewer</title>
-  <meta name="description" content="Play back a 6-DOF rocket flight simulated by Apogee: 3D trajectory, altitude, speed and acceleration, attitude and events. Open your own flight file from apogee simulate --json.">
+  <meta name="description" content="Watch a 6-DOF rocket flight simulated by Apogee in 3D: the rocket built from its own design, its airbrakes flying it to a target apogee, the parachutes and the landing. Open your own flight file from apogee simulate --json.">
   <meta name="color-scheme" content="light dark">
   <meta property="og:title" content="Apogee flight viewer">
   <meta property="og:description" content="Play back a simulated rocket flight from the launch rail to touchdown.">
@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
   <a class="skip" href="#stage">Skip to the flight</a>
@@ -27,6 +28,10 @@
       <p id="flight-meta">&nbsp;</p>
     </div>
     <div class="actions">
+      <div id="examples" class="segmented examples" role="group" aria-label="Example flight">
+        <button type="button" data-file="flights/kestrel-ab.json" aria-pressed="true" title="Kestrel with active airbrakes flying to a target apogee">Airbrakes</button>
+        <button type="button" data-file="flights/kestrel.json" aria-pressed="false" title="Kestrel flying passively">Passive</button>
+      </div>
       <button type="button" id="open" class="btn">
         <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <span>Open flight</span>
@@ -48,11 +53,29 @@
   <main id="stage" class="stage">
     <figure class="view">
       <figcaption class="panel-head">
-        <span class="label">Trajectory</span>
+        <span class="label">Flight</span>
         <ul id="legend" class="legend" aria-label="Flight phases"></ul>
+        <div id="camera" class="segmented" role="group" aria-label="Camera" hidden>
+          <button type="button" data-mode="auto" aria-pressed="true" title="Directed: range camera for the launch, then chase (C)">Auto</button>
+          <button type="button" data-mode="chase" aria-pressed="false" title="Follow the rocket">Chase</button>
+          <button type="button" data-mode="ground" aria-pressed="false" title="Tracking camera on the ground">Ground</button>
+          <button type="button" data-mode="orbit" aria-pressed="false" title="Orbit the whole trajectory">Orbit</button>
+        </div>
         <button type="button" id="reset-view" class="btn small" title="Reset the view (R)">Reset view</button>
       </figcaption>
-      <canvas id="scene" tabindex="0" role="img" aria-label="3D trajectory"></canvas>
+      <div class="stage-frame">
+        <canvas id="scene" tabindex="0" role="img" aria-label="3D view of the flight"></canvas>
+        <div id="scene-labels" class="scene-labels" aria-hidden="true"></div>
+        <div id="hud" class="hud" aria-hidden="true">
+          <div class="hud-clock"><span id="hud-t">T+0.0 s</span><span id="hud-phase"></span></div>
+          <div id="hud-brakes" class="hud-brakes" hidden>
+            <div class="hud-row"><span>Airbrakes</span><span id="hud-brake-pct">0 %</span></div>
+            <div class="gauge"><div id="hud-brake-bar" class="gauge-fill"></div></div>
+            <div class="hud-row"><span>Predicted apogee</span><span id="hud-pred">–</span></div>
+            <div class="hud-row"><span>Target</span><span id="hud-target">–</span></div>
+          </div>
+        </div>
+      </div>
       <p class="hint">Drag to orbit · scroll or pinch to zoom · double-click to reset</p>
     </figure>
 
@@ -68,6 +91,15 @@
         <div><dt>Acceleration</dt><dd><span id="r-accel" class="num">0.0</span><span class="unit">g</span></dd></div>
         <div><dt>Downrange</dt><dd><span id="r-range" class="num">0</span><span class="unit">m</span></dd></div>
       </dl>
+      <div id="computer" class="computer" hidden>
+        <div class="panel-head sub"><span class="label">Flight computer</span></div>
+        <dl class="readouts">
+          <div><dt>Predicted apogee</dt><dd><span id="r-pred" class="num">–</span><span class="unit">m</span></dd></div>
+          <div><dt>Airbrakes</dt><dd><span id="r-brake" class="num">0</span><span class="unit">%</span></dd></div>
+          <div><dt>Target</dt><dd><span id="r-target" class="num">–</span><span class="unit">m</span></dd></div>
+          <div><dt>Drag learned</dt><dd><span id="r-drag" class="num">1.00</span><span class="unit">×</span></dd></div>
+        </dl>
+      </div>
       <div class="attitude">
         <div class="panel-head sub"><span class="label">Attitude</span></div>
         <canvas id="attitude" aria-hidden="true"></canvas>
@@ -122,7 +154,7 @@
       <h2>Fly your own rocket</h2>
       <pre><code>pip install git+https://github.com/Haneet10/Apogee
 apogee simulate my_rocket.yaml --json flight.json</code></pre>
-      <p>Then choose <strong>Open flight</strong> or drop the file on this page. <span id="source-note">The flight above is Kestrel, the example rocket, in a 4 m/s west wind.</span> Files are read in your browser and never uploaded.</p>
+      <p>Then choose <strong>Open flight</strong> or drop the file on this page. <span id="source-note">The flight above is Kestrel, the example rocket, in a 4 m/s west wind.</span> Give it airbrakes and a target with <code>apogee simulate examples/kestrel-airbrakes.yaml --json ab.json</code>. Files are read in your browser and never uploaded.</p>
     </div>
     <div class="foot-col">
       <h2>Keyboard</h2>
@@ -131,12 +163,13 @@ apogee simulate my_rocket.yaml --json flight.json</code></pre>
         <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 1 s (Shift: 10 s)</dd></div>
         <div><dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Previous or next event</dd></div>
         <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Playback speed</dd></div>
+        <div><dt><kbd>C</kbd></dt><dd>Next camera</dd></div>
         <div><dt><kbd>R</kbd></dt><dd>Reset the 3D view</dd></div>
       </dl>
     </div>
     <div class="foot-col">
       <h2>About</h2>
-      <p>Apogee is a 6-DOF rocket flight simulator in Python, validated against RocketPy to 0.03 % on apogee. <a href="https://github.com/Haneet10/Apogee">Source and method on GitHub</a>.</p>
+      <p>Apogee is a 6-DOF rocket flight simulator in Python, validated against RocketPy to 0.03 % on apogee, with a closed-loop airbrake flight computer (Kalman filter and predictive control). <a href="https://github.com/Haneet10/Apogee">Source and method on GitHub</a>.</p>
     </div>
   </footer>
 

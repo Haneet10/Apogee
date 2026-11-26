@@ -1,7 +1,7 @@
 # Kestrel AB: Kestrel with an active airbrake module, aiming for an exact apogee.
 #
 # Same airframe, motor and recovery as rocket.yaml, plus a 120 mm airbrake bay
-# between the avionics bay and the booster. Three servo-driven panels open
+# between the avionics bay and the booster. Four servo-driven panels open
 # into the airflow after burnout; the flight computer reads a noisy barometer
 # and accelerometer, estimates its state with a Kalman filter, predicts where
 # it will top out and sets the panels to land on `target_apogee`.
@@ -85,14 +85,14 @@ components:
       material: fiberglass
       contents:
         - airbrakes:
-            panels: 3
+            panels: 4
             panel_width: 60mm
-            panel_height: 35mm      # how far each panel reaches into the flow
+            panel_height: 45mm      # how far each panel reaches into the flow
             cd: 1.2
             travel_time: 0.4s       # stowed to fully out
             max_mach: 0.8           # never opened faster than this
             length: 100mm
-            mass: 420g              # servo, linkage, panels and frame
+            mass: 480g              # servo, linkage, panels and frame
             position: 10mm
 
   - body_tube:

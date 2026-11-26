@@ -11,6 +11,8 @@ const SERIES = [
   { key: "acceleration_g", title: "Acceleration", unit: "g", digits: 1 },
 ];
 
+const BRAKE = { key: "brake_pct", title: "Airbrakes", unit: "% open", digits: 0, max: 100 };
+
 export class Charts {
   constructor(root, palette, { reducedMotion, onSeek, onScrub }) {
     this.root = root;
@@ -48,9 +50,14 @@ export class Charts {
 
   setFlight(flight) {
     this.flight = flight;
+    const specs = flight.airbrakes ? [...SERIES, BRAKE] : SERIES;
+    if (specs.length !== this.rows.length) {
+      for (const row of this.rows) row.el.remove();
+      this.rows = specs.map((spec) => this._row(spec));
+    }
     for (const row of this.rows) {
       const data = flight[row.spec.key];
-      const max = Math.max(...data);
+      const max = row.spec.max ?? Math.max(...data);
       row.max = ticks(0, max, 3);
       row.yMax = Math.max(row.max.values.at(-1), max) * 1.06;
     }

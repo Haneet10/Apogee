@@ -844,13 +844,17 @@ def _cmd_airbrakes(args: argparse.Namespace, out: TextIO) -> int:
     elapsed = time.monotonic() - started
     out.write(f"{args.runs:,} flights each way, seed {args.seed}, {elapsed:.0f} s\n\n")
 
+    reachable = results["Passive"].apogee >= target
+    groups = [(label, d.apogee) for label, d in results.items()]
+    if not reachable.all() and reachable.sum() >= 2:
+        groups.append(("Airbrakes, reachable", results["Airbrakes"].apogee[reachable]))
     rows = []
-    for label, d in results.items():
-        err = d.apogee - target
+    for label, apogees in groups:
+        err = apogees - target
         rows.append(
             [
                 label,
-                f"{d.apogee.mean():,.0f}",
+                f"{apogees.mean():,.0f}",
                 f"{err.mean():+,.1f}",
                 f"{err.std(ddof=1):,.1f}",
                 f"{np.abs(err).max():,.1f}",
@@ -876,7 +880,7 @@ def _cmd_airbrakes(args: argparse.Namespace, out: TextIO) -> int:
     if short:
         out.write(
             f"{short} of {args.runs} flights could not reach the target even with the "
-            "airbrakes stowed; they set the worst misses. Aim lower or fly a bigger motor.\n"
+            "airbrakes stowed (they only add drag); the last row leaves them out.\n"
         )
     if args.output != "none":
         path = (
